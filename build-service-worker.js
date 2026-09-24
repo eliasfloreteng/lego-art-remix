@@ -7,7 +7,7 @@ const VERSION_NUMBER = "v2022.12.11";
 // 2. Update VERSION_NUMBER in `app/js/index.js`
 // 3. Run `npm install workbox-build` if it hasn't been run
 // 4. Run `node build-service-worker.js`
-// 5. Copy files from `app` into the static deployment thingy
+// 5. Push to master; `.github/workflows/deploy-pages.yml` runs steps 3-4 and deploys `app` to GitHub Pages
 
 const workboxBuild = require("workbox-build");
 const buildSW = () => {
