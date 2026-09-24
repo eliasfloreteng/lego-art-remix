@@ -594,39 +594,29 @@ TIEBREAK_TECHNIQUES.forEach((technique) => {
 });
 
 let selectedInterpolationAlgorithm = "default";
-const INTERPOLATION_ALGORITHMS = [
-    {
-        name: "Browser Default",
-        value: "default",
-    },
-    {
-        name: "Average Pooling",
-        value: "avgPooling",
-    },
-    {
-        name: "Dual Min Max Pooling",
-        value: "dualMinMaxPooling",
-    },
-    {
-        name: "Min Pooling",
-        value: "minPooling",
-    },
-    {
-        name: "Max Pooling",
-        value: "maxPooling",
-    },
-];
-INTERPOLATION_ALGORITHMS.forEach((algorithm) => {
-    const option = document.createElement("a");
-    option.className = "dropdown-item btn";
-    option.textContent = algorithm.name;
-    option.value = algorithm.value;
-    option.addEventListener("click", () => {
-        document.getElementById("interpolation-algorithm-button").innerHTML = algorithm.name;
-        selectedInterpolationAlgorithm = algorithm.value;
-        runStep2();
+// INTERPOLATION_ALGORITHM_GROUPS is defined in resampling.js
+INTERPOLATION_ALGORITHM_GROUPS.forEach((group, groupIndex) => {
+    if (groupIndex > 0) {
+        const divider = document.createElement("div");
+        divider.className = "dropdown-divider";
+        document.getElementById("interpolation-algorithm-options").appendChild(divider);
+    }
+    const header = document.createElement("h6");
+    header.className = "dropdown-header";
+    header.textContent = group.name;
+    document.getElementById("interpolation-algorithm-options").appendChild(header);
+    group.algorithms.forEach((algorithm) => {
+        const option = document.createElement("a");
+        option.className = "dropdown-item btn";
+        option.textContent = algorithm.name;
+        option.value = algorithm.value;
+        option.addEventListener("click", () => {
+            document.getElementById("interpolation-algorithm-button").innerHTML = algorithm.name;
+            selectedInterpolationAlgorithm = algorithm.value;
+            runStep2();
+        });
+        document.getElementById("interpolation-algorithm-options").appendChild(option);
     });
-    document.getElementById("interpolation-algorithm-options").appendChild(option);
 });
 
 // Color distance stuff
@@ -1243,40 +1233,32 @@ function runStep1() {
 
 function runStep2() {
     let inputPixelArray;
-    if (selectedInterpolationAlgorithm === "default") {
+    const interpolationAlgorithm = getInterpolationAlgorithm(selectedInterpolationAlgorithm);
+    if (interpolationAlgorithm.canvasSmoothing !== undefined) {
+        // Let the browser rescale the image
         const croppedCanvas = inputImageCropper.getCroppedCanvas({
             width: targetResolution[0],
             height: targetResolution[1],
             maxWidth: 4096,
             maxHeight: 4096,
-            imageSmoothingEnabled: false,
+            imageSmoothingEnabled: interpolationAlgorithm.canvasSmoothing !== null,
+            imageSmoothingQuality: interpolationAlgorithm.canvasSmoothing || "low",
         });
         inputPixelArray = getPixelArrayFromCanvas(croppedCanvas);
     } else {
-        // We're using adaptive pooling
+        // Get the full resolution crop and rescale it ourselves
         const croppedCanvas = inputImageCropper.getCroppedCanvas({
             maxWidth: 4096,
             maxHeight: 4096,
             imageSmoothingEnabled: false,
         });
-        rawCroppedData = getPixelArrayFromCanvas(croppedCanvas);
-        let subArrayPoolingFunction;
-        if (selectedInterpolationAlgorithm === "maxPooling") {
-            subArrayPoolingFunction = maxPoolingKernel;
-        } else if (selectedInterpolationAlgorithm === "minPooling") {
-            subArrayPoolingFunction = minPoolingKernel;
-        } else if (selectedInterpolationAlgorithm === "avgPooling") {
-            subArrayPoolingFunction = avgPoolingKernel;
-        } else {
-            //  selectedInterpolationAlgorithm === "dualMinMaxPooling"
-            subArrayPoolingFunction = dualMinMaxPoolingKernel;
-        }
-        inputPixelArray = resizeImagePixelsWithAdaptivePooling(
+        const rawCroppedData = getPixelArrayFromCanvas(croppedCanvas);
+        inputPixelArray = resizeImagePixelsWithAlgorithm(
             rawCroppedData,
             croppedCanvas.width,
             targetResolution[0],
             targetResolution[1],
-            subArrayPoolingFunction
+            interpolationAlgorithm
         );
     }
     let filteredPixelArray = applyHSVAdjustment(
