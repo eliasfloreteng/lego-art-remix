@@ -182,6 +182,7 @@ function initializeCropper() {
         minContainerHeight: 1,
         cropend() {
             overridePixelArray = new Array(targetResolution[0] * targetResolution[1] * 4).fill(null);
+            resetOverrideHistory();
             overrideDepthPixelArray = new Array(targetResolution[0] * targetResolution[1] * 4).fill(null);
         },
     });
@@ -321,8 +322,27 @@ document.getElementById("bricklink-piece-button").innerHTML = PIXEL_TYPE_OPTIONS
 let overridePixelArray = new Array(targetResolution[0] * targetResolution[1] * 4).fill(null);
 let overrideDepthPixelArray = new Array(targetResolution[0] * targetResolution[1] * 4).fill(null);
 
+// undo/redo history of overridePixelArray snapshots for the step 3 editing tools
+const MAX_OVERRIDE_HISTORY_LENGTH = 50;
+let overrideUndoStack = [];
+let overrideRedoStack = [];
+
+function resetOverrideHistory() {
+    overrideUndoStack = [];
+    overrideRedoStack = [];
+}
+
+function pushOverrideHistory() {
+    overrideUndoStack.push(overridePixelArray.slice());
+    if (overrideUndoStack.length > MAX_OVERRIDE_HISTORY_LENGTH) {
+        overrideUndoStack.shift();
+    }
+    overrideRedoStack = [];
+}
+
 function handleResolutionChange() {
     overridePixelArray = new Array(targetResolution[0] * targetResolution[1] * 4).fill(null);
+    resetOverrideHistory();
     overrideDepthPixelArray = new Array(targetResolution[0] * targetResolution[1] * 4).fill(null);
     document.getElementById("width-text").title = `${(targetResolution[0] * PIXEL_WIDTH_CM).toFixed(1)} cm, ${(
         targetResolution[0] *
@@ -360,6 +380,7 @@ document.getElementById("height-slider").addEventListener(
     false
 );
 document.getElementById("clear-overrides-button").addEventListener("click", () => {
+    pushOverrideHistory();
     overridePixelArray = new Array(targetResolution[0] * targetResolution[1] * 4).fill(null);
     runStep2();
 });
@@ -1418,7 +1439,13 @@ function runStep3() {
         );
     }
 
-    step3PixelArrayForEraser = alignedPixelArray;
+    // the un-overridden colors, in display space (i.e. not darkened for bleedthrough)
+    step3BasePixelArray = isBleedthroughEnabled()
+        ? revertDarkenedImage(
+              alignedPixelArray,
+              getDarkenedStudsToStuds(ALL_BRICKLINK_SOLID_COLORS.map((color) => color.hex))
+          )
+        : alignedPixelArray;
     alignedPixelArray = getArrayWithOverridesApplied(
         alignedPixelArray,
         isBleedthroughEnabled() ? getDarkenedImage(overridePixelArray) : overridePixelArray
@@ -1479,12 +1506,6 @@ function runStep3() {
     step3Canvas.height = targetResolution[1];
     drawPixelsOnCanvas(alignedPixelArray, step3Canvas);
 
-    step3CanvasPixelsForHover = isBleedthroughEnabled()
-        ? revertDarkenedImage(
-              alignedPixelArray,
-              getDarkenedStudsToStuds(ALL_BRICKLINK_SOLID_COLORS.map((color) => color.hex))
-          )
-        : alignedPixelArray;
     step3DepthCanvasPixelsForHover = adjustedDepthPixelArray;
 
     const step3QuantizationError = getAverageQuantizationError(
@@ -1610,41 +1631,275 @@ function onDepthOverrideChange(row, col, isIncrease) {
     }
 }
 
-function onCherryPickColor(row, col) {
-    const pixelIndex = 4 * (row * targetResolution[0] + col);
-    const isOverridden =
-        overridePixelArray[pixelIndex] !== null &&
-        overridePixelArray[pixelIndex + 1] !== null &&
-        overridePixelArray[pixelIndex + 2] !== null;
+// the pixel array shown in step 3 before any overrides are applied, in display space
+let step3BasePixelArray = null;
 
-    const step3PixelArray = isBleedthroughEnabled()
-        ? revertDarkenedImage(
-              getPixelArrayFromCanvas(step3Canvas),
-              getDarkenedStudsToStuds(ALL_BRICKLINK_SOLID_COLORS.map((color) => color.hex))
-          )
-        : getPixelArrayFromCanvas(step3Canvas);
+function getStep3DisplayedHex(pixelIndex) {
+    if (
+        overridePixelArray[pixelIndex] != null &&
+        overridePixelArray[pixelIndex + 1] != null &&
+        overridePixelArray[pixelIndex + 2] != null
+    ) {
+        return rgbToHex(
+            overridePixelArray[pixelIndex],
+            overridePixelArray[pixelIndex + 1],
+            overridePixelArray[pixelIndex + 2]
+        );
+    }
+    return rgbToHex(
+        step3BasePixelArray[pixelIndex],
+        step3BasePixelArray[pixelIndex + 1],
+        step3BasePixelArray[pixelIndex + 2]
+    );
+}
 
-    const colorHex = isOverridden
-        ? rgbToHex(
-              overridePixelArray[pixelIndex],
-              overridePixelArray[pixelIndex + 1],
-              overridePixelArray[pixelIndex + 2]
-          )
-        : rgbToHex(step3PixelArray[pixelIndex], step3PixelArray[pixelIndex + 1], step3PixelArray[pixelIndex + 2]);
+function setPaintbrushHex(colorHex) {
     document.getElementById("paintbrush-controls").children[0].children[0].children[0].style.backgroundColor = colorHex;
-    const hexName = ALL_BRICKLINK_SOLID_COLORS.find((color) => color.hex === colorHex).name;
-    document.getElementById("paintbrush-controls").children[0].setAttribute("title", hexName);
+    const color = ALL_BRICKLINK_SOLID_COLORS.find((color) => color.hex === colorHex);
+    document.getElementById("paintbrush-controls").children[0].setAttribute("title", color ? color.name : colorHex);
     $('[data-toggle="tooltip"]').tooltip("dispose");
     $('[data-toggle="tooltip"]').tooltip();
 }
 
-let activePaintbrushHex = null; // null iff we don't want to paint
+function getPaintbrushHex() {
+    const rgb = document
+        .getElementById("paintbrush-controls")
+        .children[0].children[0].children[0].style.backgroundColor.replace("rgb(", "")
+        .replace(")", "")
+        .split(/,\s*/)
+        .map((shade) => parseInt(shade));
+    return rgbToHex(rgb[0], rgb[1], rgb[2]);
+}
+
+function onCherryPickColor(row, col) {
+    setPaintbrushHex(getStep3DisplayedHex(4 * (row * targetResolution[0] + col)));
+}
+
+// returns the [row, col] of the step 3 pixel under the mouse, clamped to the image bounds
+function getStep3CellFromMouseEvent(event) {
+    const width = Number(targetResolution[0]);
+    const height = Number(targetResolution[1]);
+    const rawRow =
+        event.clientY - step3CanvasUpscaled.getBoundingClientRect().y - step3CanvasUpscaled.offsetHeight / height / 2;
+    const rawCol =
+        event.clientX - step3CanvasUpscaled.getBoundingClientRect().x - step3CanvasUpscaled.offsetWidth / width / 2;
+    const row = Math.round((rawRow * height) / step3CanvasUpscaled.offsetHeight);
+    const col = Math.round((rawCol * width) / step3CanvasUpscaled.offsetWidth);
+    return [Math.min(Math.max(row, 0), height - 1), Math.min(Math.max(col, 0), width - 1)];
+}
+
+// draw directly on the upscaled canvas for perf - the full redraw happens on the next runStep3
+function drawStep3Cell(i, hex, radiusFraction = 1) {
+    const width = Number(targetResolution[0]);
+    const radius = SCALING_FACTOR / 2;
+    const ctx = step3CanvasUpscaledContext;
+    ctx.beginPath();
+    ctx.arc(
+        ((i % width) * 2 + 1) * radius,
+        (Math.floor(i / width) * 2 + 1) * radius,
+        radius * radiusFraction,
+        0,
+        2 * Math.PI
+    );
+    ctx.fillStyle = hex;
+    ctx.fill();
+}
+
+// hex == null means erase the override
+function setStep3CellOverride(i, hex) {
+    const pixelIndex = 4 * i;
+    const rgb = hex == null ? [null, null, null] : hexToRgb(hex);
+    for (let channel = 0; channel < 3; channel++) {
+        overridePixelArray[pixelIndex + channel] = rgb[channel];
+    }
+    drawStep3Cell(i, getStep3DisplayedHex(pixelIndex));
+}
+
+let step3BrushSize = 1;
+const MAX_STEP_3_BRUSH_SIZE = 5;
+
+// returns pixel indices (not multiplied by 4) covered by the brush centered at row, col
+function getBrushCells(row, col) {
+    const width = Number(targetResolution[0]);
+    const height = Number(targetResolution[1]);
+    const offset = Math.floor((step3BrushSize - 1) / 2);
+    const cells = [];
+    for (let r = row - offset; r < row - offset + step3BrushSize; r++) {
+        for (let c = col - offset; c < col - offset + step3BrushSize; c++) {
+            if (r >= 0 && r < height && c >= 0 && c < width) {
+                cells.push(r * width + c);
+            }
+        }
+    }
+    return cells;
+}
+
+// Bresenham's line algorithm - returns [row, col] pairs
+function getLineCells(startRow, startCol, endRow, endCol) {
+    const cells = [];
+    const dRow = Math.abs(endRow - startRow);
+    const dCol = Math.abs(endCol - startCol);
+    const stepRow = startRow < endRow ? 1 : -1;
+    const stepCol = startCol < endCol ? 1 : -1;
+    let error = dCol - dRow;
+    let row = startRow;
+    let col = startCol;
+    while (true) {
+        cells.push([row, col]);
+        if (row === endRow && col === endCol) {
+            break;
+        }
+        const doubledError = 2 * error;
+        if (doubledError > -dRow) {
+            error -= dRow;
+            col += stepCol;
+        }
+        if (doubledError < dCol) {
+            error += dCol;
+            row += stepRow;
+        }
+    }
+    return cells;
+}
+
+function getRectangleCells(startRow, startCol, endRow, endCol, isFilled) {
+    const cells = [];
+    const minRow = Math.min(startRow, endRow);
+    const maxRow = Math.max(startRow, endRow);
+    const minCol = Math.min(startCol, endCol);
+    const maxCol = Math.max(startCol, endCol);
+    for (let row = minRow; row <= maxRow; row++) {
+        for (let col = minCol; col <= maxCol; col++) {
+            if (isFilled || row === minRow || row === maxRow || col === minCol || col === maxCol) {
+                cells.push([row, col]);
+            }
+        }
+    }
+    return cells;
+}
+
+// returns pixel indices (not multiplied by 4) with brush size applied to outlines
+function getShapeCells(tool, startCell, endCell) {
+    let cells;
+    if (tool === "line-tool-dropdown-option") {
+        cells = getLineCells(startCell[0], startCell[1], endCell[0], endCell[1]);
+    } else {
+        const isFilled = tool === "filled-rectangle-tool-dropdown-option";
+        cells = getRectangleCells(startCell[0], startCell[1], endCell[0], endCell[1], isFilled);
+        if (isFilled) {
+            return cells.map(([row, col]) => row * targetResolution[0] + col);
+        }
+    }
+    const result = new Set();
+    cells.forEach(([row, col]) => getBrushCells(row, col).forEach((i) => result.add(i)));
+    return [...result];
+}
+
+// 4-connected flood fill over pixels sharing the displayed color of the starting pixel
+function getFloodFillCells(row, col) {
+    const width = Number(targetResolution[0]);
+    const height = Number(targetResolution[1]);
+    const startIndex = row * width + col;
+    const targetHex = getStep3DisplayedHex(4 * startIndex);
+    const visited = new Uint8Array(width * height);
+    const stack = [startIndex];
+    visited[startIndex] = 1;
+    const cells = [];
+    while (stack.length > 0) {
+        const i = stack.pop();
+        cells.push(i);
+        const r = Math.floor(i / width);
+        const c = i % width;
+        const neighbors = [];
+        if (r > 0) neighbors.push(i - width);
+        if (r < height - 1) neighbors.push(i + width);
+        if (c > 0) neighbors.push(i - 1);
+        if (c < width - 1) neighbors.push(i + 1);
+        neighbors.forEach((neighbor) => {
+            if (!visited[neighbor] && getStep3DisplayedHex(4 * neighbor) === targetHex) {
+                visited[neighbor] = 1;
+                stack.push(neighbor);
+            }
+        });
+    }
+    return cells;
+}
+
+// all pixels anywhere in the image sharing the displayed color of the starting pixel
+function getSameColorCells(row, col) {
+    const numPixels = targetResolution[0] * targetResolution[1];
+    const targetHex = getStep3DisplayedHex(4 * (row * targetResolution[0] + col));
+    const cells = [];
+    for (let i = 0; i < numPixels; i++) {
+        if (getStep3DisplayedHex(4 * i) === targetHex) {
+            cells.push(i);
+        }
+    }
+    return cells;
+}
+
+const PAINTBRUSH_TOOLS_USING_COLOR = [
+    "paintbrush-tool-dropdown-option",
+    "fill-tool-dropdown-option",
+    "replace-color-tool-dropdown-option",
+    "line-tool-dropdown-option",
+    "rectangle-tool-dropdown-option",
+    "filled-rectangle-tool-dropdown-option",
+];
+const PAINTBRUSH_SHAPE_TOOLS = [
+    "line-tool-dropdown-option",
+    "rectangle-tool-dropdown-option",
+    "filled-rectangle-tool-dropdown-option",
+];
+
+let isStep3MouseDown = false;
+let activePaintbrushHex = null; // the color being painted with while the mouse is down
 let wasPaintbrushUsed = false; // only propogate changes on mouse leave if this is true
+let lastBrushCell = null; // so fast brush strokes don't leave gaps
+let shapeStartCell = null;
+let shapeEndCell = null;
+let shapePreviewCells = [];
 let step3CanvasHoveredPixel = null;
-let step3CanvasPixelsForHover = null; // only used for perf
+
+function isStep3InteractionDisabled() {
+    // interaction is disabled because we're loading/working, or there's nothing to edit yet
+    return !document.getElementById("universal-loading-progress").hidden || step3BasePixelArray == null;
+}
+
+function clearStep3HoverHighlight() {
+    if (step3CanvasHoveredPixel != null) {
+        const i = step3CanvasHoveredPixel[0] * targetResolution[0] + step3CanvasHoveredPixel[1];
+        drawStep3Cell(i, getStep3DisplayedHex(4 * i), 0.5);
+    }
+    step3CanvasHoveredPixel = null;
+}
+
+function applyBrushAt(row, col) {
+    const hex = selectedPaintbrushTool === "eraser-tool-dropdown-option" ? null : activePaintbrushHex;
+    const path = lastBrushCell == null ? [[row, col]] : getLineCells(lastBrushCell[0], lastBrushCell[1], row, col);
+    path.forEach(([r, c]) => getBrushCells(r, c).forEach((i) => setStep3CellOverride(i, hex)));
+    lastBrushCell = [row, col];
+}
+
+function updateShapePreview(row, col) {
+    shapePreviewCells.forEach((i) => drawStep3Cell(i, getStep3DisplayedHex(4 * i)));
+    shapeEndCell = [row, col];
+    shapePreviewCells = getShapeCells(selectedPaintbrushTool, shapeStartCell, shapeEndCell);
+    shapePreviewCells.forEach((i) => drawStep3Cell(i, activePaintbrushHex));
+}
 
 function onStep3PaintingMouseLift() {
+    if (isStep3MouseDown && shapeStartCell != null && shapeEndCell != null) {
+        pushOverrideHistory();
+        shapePreviewCells.forEach((i) => setStep3CellOverride(i, activePaintbrushHex));
+        wasPaintbrushUsed = true;
+    }
+    isStep3MouseDown = false;
     activePaintbrushHex = null;
+    lastBrushCell = null;
+    shapeStartCell = null;
+    shapeEndCell = null;
+    shapePreviewCells = [];
     // propogate changes
     if (!isStep3ViewExpanded && wasPaintbrushUsed) {
         disableInteraction();
@@ -1656,142 +1911,161 @@ function onStep3PaintingMouseLift() {
 step3CanvasUpscaled.addEventListener(
     "mousedown",
     function (event) {
-        wasPaintbrushUsed = true;
-        const rawRow =
-            event.clientY -
-            step3CanvasUpscaled.getBoundingClientRect().y -
-            step3CanvasUpscaled.offsetHeight / targetResolution[1] / 2;
-        const rawCol =
-            event.clientX -
-            step3CanvasUpscaled.getBoundingClientRect().x -
-            step3CanvasUpscaled.offsetWidth / targetResolution[0] / 2;
-        const row = Math.round((rawRow * targetResolution[1]) / step3CanvasUpscaled.offsetHeight);
-        const col = Math.round((rawCol * targetResolution[0]) / step3CanvasUpscaled.offsetWidth);
-        const rgb = document
-            .getElementById("paintbrush-controls")
-            .children[0].children[0].children[0].style.backgroundColor.replace("rgb(", "")
-            .replace(")", "")
-            .split(/,\s*/)
-            .map((shade) => parseInt(shade));
-        activePaintbrushHex = rgbToHex(rgb[0], rgb[1], rgb[2]);
-        onMouseMoveOverStep3Canvas(event); // so we paint on a single click
+        if (isStep3InteractionDisabled()) {
+            return;
+        }
+        const [row, col] = getStep3CellFromMouseEvent(event);
+        clearStep3HoverHighlight();
+        isStep3MouseDown = true;
+        activePaintbrushHex = getPaintbrushHex();
+
+        if (
+            selectedPaintbrushTool === "paintbrush-tool-dropdown-option" ||
+            selectedPaintbrushTool === "eraser-tool-dropdown-option"
+        ) {
+            pushOverrideHistory();
+            wasPaintbrushUsed = true;
+            applyBrushAt(row, col); // so we paint on a single click
+        } else if (
+            selectedPaintbrushTool === "fill-tool-dropdown-option" ||
+            selectedPaintbrushTool === "replace-color-tool-dropdown-option"
+        ) {
+            if (getStep3DisplayedHex(4 * (row * targetResolution[0] + col)) === activePaintbrushHex) {
+                return; // nothing would change
+            }
+            const cells =
+                selectedPaintbrushTool === "fill-tool-dropdown-option"
+                    ? getFloodFillCells(row, col)
+                    : getSameColorCells(row, col);
+            pushOverrideHistory();
+            wasPaintbrushUsed = true;
+            cells.forEach((i) => setStep3CellOverride(i, activePaintbrushHex));
+        } else if (PAINTBRUSH_SHAPE_TOOLS.includes(selectedPaintbrushTool)) {
+            shapeStartCell = [row, col];
+            updateShapePreview(row, col);
+        } else {
+            // dropper tool
+            onCherryPickColor(row, col);
+        }
     },
     false
 );
 
 let selectedPaintbrushTool = "paintbrush-tool-dropdown-option";
+
+function selectPaintbrushTool(toolId) {
+    selectedPaintbrushTool = toolId;
+    document.getElementById("paintbrush-color-dropdown").disabled = !PAINTBRUSH_TOOLS_USING_COLOR.includes(toolId);
+    document.getElementById("paintbrush-tool-selection-dropdown").innerHTML =
+        document.getElementById(toolId).children[0].innerHTML;
+}
+
 Array.from(document.getElementById("paintbrush-tool-selection-dropdown-options").children).forEach((item) => {
-    const value = item.id;
-    item.addEventListener("click", () => {
-        selectedPaintbrushTool = value;
-        document.getElementById("paintbrush-color-dropdown").disabled = value !== "paintbrush-tool-dropdown-option";
-        document.getElementById("paintbrush-tool-selection-dropdown").innerHTML = item.children[0].innerHTML;
-    });
+    item.addEventListener("click", () => selectPaintbrushTool(item.id));
 });
 
-let step3PixelArrayForEraser = null;
+function setStep3BrushSize(size) {
+    step3BrushSize = Math.min(Math.max(size, 1), MAX_STEP_3_BRUSH_SIZE);
+    document.getElementById("brush-size-dropdown").innerHTML = `${step3BrushSize}×${step3BrushSize}`;
+}
+
+Array.from(document.getElementById("brush-size-dropdown-options").children).forEach((item) => {
+    item.addEventListener("click", () => setStep3BrushSize(Number(item.getAttribute("data-size"))));
+});
+
+function restoreOverrideHistory(fromStack, toStack) {
+    if (fromStack.length === 0 || isStep3InteractionDisabled() || isStep3MouseDown) {
+        return;
+    }
+    toStack.push(overridePixelArray);
+    overridePixelArray = fromStack.pop();
+    disableInteraction();
+    runStep3();
+}
+
+function undoOverrideChange() {
+    restoreOverrideHistory(overrideUndoStack, overrideRedoStack);
+}
+
+function redoOverrideChange() {
+    restoreOverrideHistory(overrideRedoStack, overrideUndoStack);
+}
+
+document.getElementById("undo-overrides-button").addEventListener("click", undoOverrideChange);
+document.getElementById("redo-overrides-button").addEventListener("click", redoOverrideChange);
+
+const PAINTBRUSH_TOOL_SHORTCUTS = {
+    b: "paintbrush-tool-dropdown-option",
+    e: "eraser-tool-dropdown-option",
+    i: "dropdown-tool-dropdown-option",
+    g: "fill-tool-dropdown-option",
+    r: "replace-color-tool-dropdown-option",
+    l: "line-tool-dropdown-option",
+    u: "rectangle-tool-dropdown-option",
+    f: "filled-rectangle-tool-dropdown-option",
+};
+
+document.addEventListener("keydown", (event) => {
+    const target = event.target;
+    if (
+        step3BasePixelArray == null ||
+        target.isContentEditable ||
+        ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)
+    ) {
+        return;
+    }
+    const key = event.key.toLowerCase();
+    if (event.ctrlKey || event.metaKey) {
+        if (key === "z" && !event.shiftKey) {
+            event.preventDefault();
+            undoOverrideChange();
+        } else if ((key === "z" && event.shiftKey) || key === "y") {
+            event.preventDefault();
+            redoOverrideChange();
+        }
+        return;
+    }
+    if (event.altKey || isStep3MouseDown) {
+        return;
+    }
+    if (PAINTBRUSH_TOOL_SHORTCUTS[key] != null) {
+        selectPaintbrushTool(PAINTBRUSH_TOOL_SHORTCUTS[key]);
+    } else if (event.key === "[") {
+        setStep3BrushSize(step3BrushSize - 1);
+    } else if (event.key === "]") {
+        setStep3BrushSize(step3BrushSize + 1);
+    }
+});
 
 function onMouseMoveOverStep3Canvas(event) {
-    if (!document.getElementById("universal-loading-progress").hidden) {
-        return; // ignore this - interaction is disabled because we're loading/working
+    if (isStep3InteractionDisabled()) {
+        return;
     }
-    const rawRow =
-        event.clientY -
-        step3CanvasUpscaled.getBoundingClientRect().y -
-        step3CanvasUpscaled.offsetHeight / targetResolution[1] / 2;
-    const rawCol =
-        event.clientX -
-        step3CanvasUpscaled.getBoundingClientRect().x -
-        step3CanvasUpscaled.offsetWidth / targetResolution[0] / 2;
-    const row = Math.round((rawRow * targetResolution[1]) / step3CanvasUpscaled.offsetHeight);
-    const col = Math.round((rawCol * targetResolution[0]) / step3CanvasUpscaled.offsetWidth);
+    const [row, col] = getStep3CellFromMouseEvent(event);
 
-    const pixelIndex = 4 * (row * targetResolution[0] + col);
-    const i = pixelIndex / 4;
-    const ctx = step3CanvasUpscaledContext;
-    const width = targetResolution[0];
-    const radius = SCALING_FACTOR / 2;
-
-    if (activePaintbrushHex != null) {
+    if (isStep3MouseDown) {
         // mouse is clicked down, so we're handling the click
-
-        if (selectedPaintbrushTool === "paintbrush-tool-dropdown-option") {
-            const colorRGB = hexToRgb(activePaintbrushHex);
-            // we want to paint - update the override pixel array
-            // do stuff directly on the canvas for perf
-            ctx.beginPath();
-            ctx.arc(((i % width) * 2 + 1) * radius, (Math.floor(i / width) * 2 + 1) * radius, radius, 0, 2 * Math.PI);
-            ctx.fillStyle = activePaintbrushHex;
-            ctx.fill();
-
-            // update the override pixel array in place
-            overridePixelArray[pixelIndex] = colorRGB[0];
-            overridePixelArray[pixelIndex + 1] = colorRGB[1];
-            overridePixelArray[pixelIndex + 2] = colorRGB[2];
-        } else if (selectedPaintbrushTool === "eraser-tool-dropdown-option") {
-            // null out the override
-            if (
-                overridePixelArray[pixelIndex] != null &&
-                overridePixelArray[pixelIndex + 1] != null &&
-                overridePixelArray[pixelIndex + 2] != null
-            ) {
-                // do stuff directly on the canvas for perf
-                ctx.beginPath();
-                ctx.arc(
-                    ((i % width) * 2 + 1) * radius,
-                    (Math.floor(i / width) * 2 + 1) * radius,
-                    radius,
-                    0,
-                    2 * Math.PI
-                );
-                ctx.fillStyle = rgbToHex(
-                    step3PixelArrayForEraser[pixelIndex],
-                    step3PixelArrayForEraser[pixelIndex + 1],
-                    step3PixelArrayForEraser[pixelIndex + 2]
-                );
-                ctx.fill();
-
-                // update the override pixel array in place
-                overridePixelArray[pixelIndex] = null;
-                overridePixelArray[pixelIndex + 1] = null;
-                overridePixelArray[pixelIndex + 2] = null;
+        if (
+            selectedPaintbrushTool === "paintbrush-tool-dropdown-option" ||
+            selectedPaintbrushTool === "eraser-tool-dropdown-option"
+        ) {
+            applyBrushAt(row, col);
+        } else if (PAINTBRUSH_SHAPE_TOOLS.includes(selectedPaintbrushTool)) {
+            if (shapeEndCell == null || shapeEndCell[0] !== row || shapeEndCell[1] !== col) {
+                updateShapePreview(row, col);
             }
-        } else {
-            // dropper tool
+        } else if (selectedPaintbrushTool === "dropdown-tool-dropdown-option") {
             onCherryPickColor(row, col);
         }
-    } else if (pixelIndex + 2 < step3CanvasPixelsForHover.length) {
-        // we're not painting - highlight the pixel instead
-        const hoveredPixelRGB = [
-            step3CanvasPixelsForHover[pixelIndex],
-            step3CanvasPixelsForHover[pixelIndex + 1],
-            step3CanvasPixelsForHover[pixelIndex + 2],
-        ];
-        const hoveredPixelHex = rgbToHex(hoveredPixelRGB[0], hoveredPixelRGB[1], hoveredPixelRGB[2]);
-        ctx.beginPath();
-        ctx.arc(((i % width) * 2 + 1) * radius, (Math.floor(i / width) * 2 + 1) * radius, radius / 2, 0, 2 * Math.PI);
-        ctx.fillStyle = inverseHex(hoveredPixelHex);
-        ctx.fill();
+        return;
     }
 
+    // we're not painting - highlight the pixel instead
     if (step3CanvasHoveredPixel != null && (step3CanvasHoveredPixel[0] !== row || step3CanvasHoveredPixel[1] !== col)) {
-        // Clear out old highlight
-        const i = step3CanvasHoveredPixel[0] * width + step3CanvasHoveredPixel[1];
-        const pixelIndex = i * 4;
-
-        ctx.beginPath();
-        ctx.arc(((i % width) * 2 + 1) * radius, (Math.floor(i / width) * 2 + 1) * radius, radius / 2, 0, 2 * Math.PI);
-
-        let originalPixelRGB = [
-            overridePixelArray[pixelIndex] || step3CanvasPixelsForHover[pixelIndex],
-            overridePixelArray[pixelIndex + 1] || step3CanvasPixelsForHover[pixelIndex + 1],
-            overridePixelArray[pixelIndex + 2] || step3CanvasPixelsForHover[pixelIndex + 2],
-        ];
-        const originalPixelHex = rgbToHex(originalPixelRGB[0], originalPixelRGB[1], originalPixelRGB[2]);
-
-        ctx.fillStyle = originalPixelHex;
-        ctx.fill();
+        clearStep3HoverHighlight();
     }
+    const i = row * targetResolution[0] + col;
+    drawStep3Cell(i, inverseHex(getStep3DisplayedHex(4 * i)), 0.5);
     step3CanvasHoveredPixel = [row, col];
 }
 
@@ -1800,33 +2074,9 @@ step3CanvasUpscaled.addEventListener("mouseup", onStep3PaintingMouseLift, false)
 step3CanvasUpscaled.addEventListener(
     "mouseleave",
     () => {
-        if (step3CanvasHoveredPixel != null) {
-            // Clear out old highlight
-            const i = step3CanvasHoveredPixel[0] * targetResolution[0] + step3CanvasHoveredPixel[1];
-            const pixelIndex = i * 4;
-
-            const radius = SCALING_FACTOR / 2;
-            step3CanvasUpscaledContext.beginPath();
-            step3CanvasUpscaledContext.arc(
-                ((i % targetResolution[0]) * 2 + 1) * radius,
-                (Math.floor(i / targetResolution[0]) * 2 + 1) * radius,
-                radius / 2,
-                0,
-                2 * Math.PI
-            );
-
-            let originalPixelRGB = [
-                overridePixelArray[pixelIndex] || step3CanvasPixelsForHover[pixelIndex],
-                overridePixelArray[pixelIndex + 1] || step3CanvasPixelsForHover[pixelIndex + 1],
-                overridePixelArray[pixelIndex + 2] || step3CanvasPixelsForHover[pixelIndex + 2],
-            ];
-            const originalPixelHex = rgbToHex(originalPixelRGB[0], originalPixelRGB[1], originalPixelRGB[2]);
-
-            step3CanvasUpscaledContext.fillStyle = originalPixelHex;
-            step3CanvasUpscaledContext.fill();
+        if (step3BasePixelArray != null) {
+            clearStep3HoverHighlight();
         }
-
-        step3CanvasHoveredPixel = null;
         onStep3PaintingMouseLift();
     },
     false
@@ -2854,6 +3104,7 @@ function handleInputImage(e, dontClearDepth, dontLog) {
 
             overridePixelArray = new Array(targetResolution[0] * targetResolution[1] * 4).fill(null);
             overrideDepthPixelArray = new Array(targetResolution[0] * targetResolution[1] * 4).fill(null);
+            resetOverrideHistory();
             initializeCropper();
             runStep1();
         }, 50); // TODO: find better way to check that input is finished
