@@ -44,6 +44,22 @@
         text-decoration: none !important;
       }
 
+      .comparison-grid-tile {
+        padding: 6px;
+        margin-bottom: 10px;
+        cursor: pointer;
+        border: 2px solid transparent;
+      }
+
+      .comparison-grid-tile:hover {
+        border-color: #6c757d;
+      }
+
+      .comparison-grid-tile-selected,
+      .comparison-grid-tile-selected:hover {
+        border-color: #007bff;
+      }
+
       #responsive-youtube {
         overflow: hidden;
         padding-bottom: 56.25%;
@@ -2083,6 +2099,45 @@
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row" id="comparison-grid-row" hidden>
+      <div class="col-12">
+        <div class="card" style="padding: 10px; margin-bottom: 10px">
+          <h4>Compare Settings</h4>
+          <small class="step-header-subtitle">
+            Preview the mosaic for several common settings side by side, then click one to use it
+          </small>
+          <div style="margin-top: 8px">
+            <div class="btn-group">
+              <button
+                class="btn dropdown-toggle btn-outline-dark"
+                type="button"
+                id="comparison-grid-mode-button"
+                data-toggle="dropdown"
+              >
+                Common Presets
+              </button>
+              <div class="dropdown-menu" id="comparison-grid-mode-options">
+                <a class="dropdown-item btn" data-mode="presets">Common Presets</a>
+                <a class="dropdown-item btn" data-mode="quantization">Quantization Algorithms</a>
+                <a class="dropdown-item btn" data-mode="distance">Color Distance Functions</a>
+                <a class="dropdown-item btn" data-mode="interpolation">Interpolation Algorithms</a>
+              </div>
+            </div>
+            <button class="btn btn-outline-primary" type="button" id="generate-comparison-grid-button">
+              Generate Grid
+            </button>
+          </div>
+          <small style="display: block; margin-top: 4px">
+            Previews use the current crop, resolution, colors and adjustments, with infinite piece counts
+          </small>
+          <div class="progress" style="height: 4px; margin-top: 8px" id="comparison-grid-progress" hidden>
+            <div class="progress-bar indeterminate"></div>
+          </div>
+          <div class="row" id="comparison-grid" style="margin-top: 8px"></div>
         </div>
       </div>
     </div>
