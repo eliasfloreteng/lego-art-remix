@@ -18,6 +18,9 @@ const buildSW = () => {
         sourcemap: false,
         cacheId: VERSION_NUMBER,
         cleanupOutdatedCaches: true,
+        // activate new deployments immediately instead of waiting for every open tab to close
+        skipWaiting: true,
+        clientsClaim: true,
     });
 };
 

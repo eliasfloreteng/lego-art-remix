@@ -2461,6 +2461,17 @@
     <script>
       // note that the disableServiceWorker param only disables new service worker registration
       if ("serviceWorker" in navigator && !window.location.href.match(/disableServiceWorker/gi)) {
+        // reload once when an updated service worker takes over, so a new deployment shows up right away
+        // (skipped on the very first install, when there's no previous version to replace)
+        if (navigator.serviceWorker.controller) {
+          let isReloadingForUpdate = false;
+          navigator.serviceWorker.addEventListener("controllerchange", () => {
+            if (!isReloadingForUpdate) {
+              isReloadingForUpdate = true;
+              window.location.reload();
+            }
+          });
+        }
         navigator.serviceWorker
           .register("service-worker.js")
           .then(function (registration) {
