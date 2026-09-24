@@ -60,6 +60,24 @@
         border-color: #007bff;
       }
 
+      .interpolation-algorithm-option {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .favorite-star {
+        margin-left: 12px;
+        padding: 0 4px;
+        color: #adb5bd;
+        cursor: pointer;
+      }
+
+      .favorite-star:hover,
+      .favorite-star-active {
+        color: #f0ad00;
+      }
+
       #responsive-youtube {
         overflow: hidden;
         padding-bottom: 56.25%;
@@ -673,7 +691,7 @@
                           <small>
                             <p style="margin-bottom: 4px">
                               This setting determines which algorithm is used to resize the image to the target
-                              resolution
+                              resolution. Star algorithms to favorite them - hovering a favorite previews it.
                             </p>
                           </small>
                         </div>

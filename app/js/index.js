@@ -615,30 +615,236 @@ TIEBREAK_TECHNIQUES.forEach((technique) => {
 });
 
 let selectedInterpolationAlgorithm = "default";
-// INTERPOLATION_ALGORITHM_GROUPS is defined in resampling.js
-INTERPOLATION_ALGORITHM_GROUPS.forEach((group, groupIndex) => {
-    if (groupIndex > 0) {
-        const divider = document.createElement("div");
-        divider.className = "dropdown-divider";
-        document.getElementById("interpolation-algorithm-options").appendChild(divider);
+
+const FAVORITE_INTERPOLATION_ALGORITHMS_STORAGE_KEY = "favoriteInterpolationAlgorithms";
+
+function loadFavoriteInterpolationAlgorithms() {
+    try {
+        const stored = JSON.parse(localStorage.getItem(FAVORITE_INTERPOLATION_ALGORITHMS_STORAGE_KEY));
+        if (Array.isArray(stored)) {
+            return stored.filter((value) => INTERPOLATION_ALGORITHMS.some((algorithm) => algorithm.value === value));
+        }
+    } catch (err) {
+        // storage can be unavailable (e.g. private browsing), so favorites just won't persist
     }
-    const header = document.createElement("h6");
-    header.className = "dropdown-header";
-    header.textContent = group.name;
-    document.getElementById("interpolation-algorithm-options").appendChild(header);
-    group.algorithms.forEach((algorithm) => {
-        const option = document.createElement("a");
-        option.className = "dropdown-item btn";
-        option.textContent = algorithm.name;
-        option.value = algorithm.value;
-        option.addEventListener("click", () => {
-            document.getElementById("interpolation-algorithm-button").innerHTML = algorithm.name;
-            selectedInterpolationAlgorithm = algorithm.value;
-            runStep2();
-        });
-        document.getElementById("interpolation-algorithm-options").appendChild(option);
+    return [];
+}
+
+let favoriteInterpolationAlgorithms = loadFavoriteInterpolationAlgorithms();
+
+function toggleFavoriteInterpolationAlgorithm(value) {
+    if (favoriteInterpolationAlgorithms.includes(value)) {
+        favoriteInterpolationAlgorithms = favoriteInterpolationAlgorithms.filter((favorite) => favorite !== value);
+    } else {
+        favoriteInterpolationAlgorithms.push(value);
+    }
+    try {
+        localStorage.setItem(
+            FAVORITE_INTERPOLATION_ALGORITHMS_STORAGE_KEY,
+            JSON.stringify(favoriteInterpolationAlgorithms)
+        );
+    } catch (err) {
+        // ignore, see loadFavoriteInterpolationAlgorithms
+    }
+    buildInterpolationAlgorithmOptions();
+    bakeInterpolationPreviews();
+}
+
+function createInterpolationAlgorithmOption(algorithm) {
+    const isFavorite = favoriteInterpolationAlgorithms.includes(algorithm.value);
+    const option = document.createElement("a");
+    option.className = "dropdown-item btn interpolation-algorithm-option";
+    option.value = algorithm.value;
+
+    const name = document.createElement("span");
+    name.textContent = algorithm.name;
+    option.appendChild(name);
+
+    const star = document.createElement("span");
+    star.className = isFavorite ? "favorite-star favorite-star-active" : "favorite-star";
+    star.textContent = isFavorite ? "★" : "☆";
+    star.title = isFavorite ? "Remove from favorites" : "Add to favorites (favorites are previewed on hover)";
+    star.addEventListener("click", (event) => {
+        // keep the dropdown open and don't select the algorithm
+        event.preventDefault();
+        event.stopPropagation();
+        toggleFavoriteInterpolationAlgorithm(algorithm.value);
     });
-});
+    option.appendChild(star);
+
+    option.addEventListener("click", () => {
+        endInterpolationPreview();
+        document.getElementById("interpolation-algorithm-button").innerHTML = algorithm.name;
+        selectedInterpolationAlgorithm = algorithm.value;
+        runStep2();
+    });
+    option.addEventListener("mouseenter", () => {
+        if (favoriteInterpolationAlgorithms.includes(algorithm.value)) {
+            showInterpolationPreview(algorithm.value);
+        } else {
+            endInterpolationPreview();
+        }
+    });
+    return option;
+}
+
+// INTERPOLATION_ALGORITHM_GROUPS is defined in resampling.js
+function buildInterpolationAlgorithmOptions() {
+    const options = document.getElementById("interpolation-algorithm-options");
+    options.innerHTML = "";
+    const groups = [];
+    if (favoriteInterpolationAlgorithms.length > 0) {
+        groups.push({
+            name: "Favorites",
+            algorithms: favoriteInterpolationAlgorithms.map(getInterpolationAlgorithm),
+        });
+    }
+    groups.push(...INTERPOLATION_ALGORITHM_GROUPS);
+    groups.forEach((group, groupIndex) => {
+        if (groupIndex > 0) {
+            const divider = document.createElement("div");
+            divider.className = "dropdown-divider";
+            options.appendChild(divider);
+        }
+        const header = document.createElement("h6");
+        header.className = "dropdown-header";
+        header.textContent = group.name;
+        options.appendChild(header);
+        group.algorithms.forEach((algorithm) => options.appendChild(createInterpolationAlgorithmOption(algorithm)));
+    });
+}
+buildInterpolationAlgorithmOptions();
+
+// Hover previews for favorite interpolation algorithms.
+// Previews are baked into their own canvases ahead of time, and hovering just swaps which canvas is shown,
+// so moving between favorites doesn't have to redraw anything.
+let interpolationPreviewCache = new Map(); // algorithm value -> baked preview
+let interpolationPreviewGeneration = 0; // incremented whenever the baked previews become stale
+let shownInterpolationPreview = null;
+
+function invalidateInterpolationPreviews() {
+    interpolationPreviewGeneration++;
+    interpolationPreviewCache = new Map();
+    endInterpolationPreview();
+}
+
+function createPreviewCanvas(canvasToCover) {
+    const canvas = document.createElement("canvas");
+    canvas.style.width = "100%";
+    canvas.className = canvasToCover.className;
+    return canvas;
+}
+
+function bakeInterpolationPreview(value) {
+    const preview = getMosaicPreviewPixels({
+        interpolation: value,
+        quantization: quantizationAlgorithm,
+        distance: getSelectedDistanceFunctionKey(),
+    });
+
+    const step2PreviewCanvas = createPreviewCanvas(step2CanvasUpscaled);
+    step2PreviewCanvas.width = targetResolution[0];
+    step2PreviewCanvas.height = targetResolution[1];
+    step2PreviewCanvas.style.imageRendering = "pixelated";
+    step2PreviewCanvas.getContext("2d").drawImage(preview.step2Canvas, 0, 0);
+
+    const step3PreviewCanvas = createPreviewCanvas(step3CanvasUpscaled);
+    drawStudImageOnCanvas(
+        preview.displayPixelArray,
+        targetResolution[0],
+        SCALING_FACTOR,
+        step3PreviewCanvas,
+        preview.pixelPartNumber
+    );
+
+    const baked = {
+        step2Canvas: step2PreviewCanvas,
+        step3Canvas: step3PreviewCanvas,
+        quantizationError: getAverageQuantizationError(
+            preview.step2PixelArray,
+            preview.alignedPixelArray,
+            colorDistanceFunction
+        ).toFixed(3),
+    };
+    interpolationPreviewCache.set(value, baked);
+    return baked;
+}
+
+function getBakedInterpolationPreview(value) {
+    return interpolationPreviewCache.get(value) || bakeInterpolationPreview(value);
+}
+
+// Bakes every favorite in the background, one at a time so that the page stays responsive
+function bakeInterpolationPreviews() {
+    if (inputImageCropper == null) {
+        return;
+    }
+    const generation = interpolationPreviewGeneration;
+    const bakeNext = () => {
+        if (generation !== interpolationPreviewGeneration) {
+            return;
+        }
+        const value = favoriteInterpolationAlgorithms.find((favorite) => !interpolationPreviewCache.has(favorite));
+        if (value == null) {
+            return;
+        }
+        try {
+            bakeInterpolationPreview(value);
+        } catch (err) {
+            console.error(err);
+            return;
+        }
+        setTimeout(bakeNext, 1);
+    };
+    setTimeout(bakeNext, 1);
+}
+
+function showInterpolationPreview(value) {
+    if (inputImageCropper == null) {
+        return;
+    }
+    let baked;
+    try {
+        baked = getBakedInterpolationPreview(value);
+    } catch (err) {
+        console.error(err);
+        return;
+    }
+    if (shownInterpolationPreview != null && shownInterpolationPreview.step2Canvas === baked.step2Canvas) {
+        return;
+    }
+    const quantizationError = document.getElementById("step-3-quantization-error");
+    const previousQuantizationError =
+        shownInterpolationPreview == null
+            ? quantizationError.innerHTML
+            : shownInterpolationPreview.previousQuantizationError;
+    endInterpolationPreview();
+    step2CanvasUpscaled.after(baked.step2Canvas);
+    step3CanvasUpscaled.after(baked.step3Canvas);
+    step2CanvasUpscaled.hidden = true;
+    step3CanvasUpscaled.hidden = true;
+    quantizationError.innerHTML = baked.quantizationError;
+    shownInterpolationPreview = { ...baked, previousQuantizationError };
+}
+
+function endInterpolationPreview() {
+    if (shownInterpolationPreview == null) {
+        return;
+    }
+    shownInterpolationPreview.step2Canvas.remove();
+    shownInterpolationPreview.step3Canvas.remove();
+    step2CanvasUpscaled.hidden = false;
+    step3CanvasUpscaled.hidden = false;
+    document.getElementById("step-3-quantization-error").innerHTML =
+        shownInterpolationPreview.previousQuantizationError;
+    shownInterpolationPreview = null;
+}
+
+document
+    .getElementById("interpolation-algorithm-options")
+    .addEventListener("mouseleave", () => endInterpolationPreview());
+$("#interpolation-algorithm-button").parent().on("show.bs.dropdown", bakeInterpolationPreviews);
+$("#interpolation-algorithm-button").parent().on("hide.bs.dropdown", () => endInterpolationPreview());
 
 // Color distance stuff
 function d3ColorDistanceWrapper(d3DistanceFunction) {
@@ -1424,6 +1630,7 @@ function quantizePixelArray(pixelArray, quantizationAlgorithmKey, distanceFuncti
 }
 
 function runStep3() {
+    invalidateInterpolationPreviews();
     const fiteredPixelArray = getPixelArrayFromCanvas(step2Canvas);
 
     // TODO: Apply overrides separately
@@ -1684,13 +1891,14 @@ function createComparisonGridTile(settings) {
     return { column, canvas, error };
 }
 
-function renderComparisonGridTile(settings, canvas, errorText) {
+// Renders the mosaic for the given settings without touching the main pipeline's canvases
+function getMosaicPreviewPixels(settings) {
     // round trip through a canvas so that we quantize exactly what step 3 would
-    const step2BufferCanvas = document.createElement("canvas");
-    step2BufferCanvas.width = targetResolution[0];
-    step2BufferCanvas.height = targetResolution[1];
-    drawPixelsOnCanvas(getStep2PixelArray(settings.interpolation), step2BufferCanvas);
-    const step2PixelArray = getPixelArrayFromCanvas(step2BufferCanvas);
+    const step2Canvas = document.createElement("canvas");
+    step2Canvas.width = targetResolution[0];
+    step2Canvas.height = targetResolution[1];
+    drawPixelsOnCanvas(getStep2PixelArray(settings.interpolation), step2Canvas);
+    const step2PixelArray = getPixelArrayFromCanvas(step2Canvas);
 
     const distanceFunction = colorDistanceFunctionsInfo[settings.distance].func;
     let alignedPixelArray = quantizePixelArray(step2PixelArray, settings.quantization, distanceFunction);
@@ -1699,25 +1907,38 @@ function renderComparisonGridTile(settings, canvas, errorText) {
         isBleedthroughEnabled() ? getDarkenedImage(overridePixelArray) : overridePixelArray
     );
 
-    drawStudImageOnCanvas(
-        isBleedthroughEnabled()
+    return {
+        step2Canvas,
+        step2PixelArray,
+        alignedPixelArray,
+        displayPixelArray: isBleedthroughEnabled()
             ? revertDarkenedImage(
                   alignedPixelArray,
                   getDarkenedStudsToStuds(ALL_BRICKLINK_SOLID_COLORS.map((color) => color.hex))
               )
             : alignedPixelArray,
+        // variable pieces need a full step 3 run to be laid out, so just show their pixels
+        pixelPartNumber: ("" + selectedPixelPartNumber).match("^variable.*$")
+            ? PIXEL_TYPE_OPTIONS[2].number
+            : selectedPixelPartNumber,
+    };
+}
+
+function renderComparisonGridTile(settings, canvas, errorText) {
+    const preview = getMosaicPreviewPixels(settings);
+    drawStudImageOnCanvas(
+        preview.displayPixelArray,
         targetResolution[0],
         COMPARISON_GRID_SCALING_FACTOR,
         canvas,
-        // variable pieces need a full step 3 run to be laid out, so just show their pixels
-        ("" + selectedPixelPartNumber).match("^variable.*$") ? PIXEL_TYPE_OPTIONS[2].number : selectedPixelPartNumber
+        preview.pixelPartNumber
     );
     // measure every tile with the same distance function so that the errors are comparable
     errorText.textContent =
         "Error (CIEDE2000): " +
         getAverageQuantizationError(
-            step2PixelArray,
-            alignedPixelArray,
+            preview.step2PixelArray,
+            preview.alignedPixelArray,
             colorDistanceFunctionsInfo.ciede2000.func
         ).toFixed(3);
 }
