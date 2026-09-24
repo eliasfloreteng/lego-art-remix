@@ -158,20 +158,24 @@ const INCHES_IN_CM = 0.393701;
 const SCALING_FACTOR = 40;
 const PLATE_WIDTH = 16;
 
-document.getElementById("width-text").title = `${(targetResolution[0] * PIXEL_WIDTH_CM).toFixed(1)} cm, ${(
-    targetResolution[0] *
-    PIXEL_WIDTH_CM *
-    INCHES_IN_CM
-).toFixed(1)}″`;
-document.getElementById("height-text").title = `${(targetResolution[1] * PIXEL_WIDTH_CM).toFixed(1)} cm, ${(
-    targetResolution[1] *
-    PIXEL_WIDTH_CM *
-    INCHES_IN_CM
-).toFixed(1)}″`;
+function updateResolutionTitles() {
+    document.getElementById("width-text").title = `${(targetResolution[0] * PIXEL_WIDTH_CM).toFixed(1)} cm, ${(
+        targetResolution[0] *
+        PIXEL_WIDTH_CM *
+        INCHES_IN_CM
+    ).toFixed(1)}″`;
+    document.getElementById("height-text").title = `${(targetResolution[1] * PIXEL_WIDTH_CM).toFixed(1)} cm, ${(
+        targetResolution[1] *
+        PIXEL_WIDTH_CM *
+        INCHES_IN_CM
+    ).toFixed(1)}″`;
+}
+updateResolutionTitles();
 
 let inputImageCropper;
 
-function initializeCropper() {
+// initialData optionally restores a previous crop box, and onReady runs once the cropper can be used
+function initializeCropper(initialData, onReady) {
     if (inputImageCropper != null) {
         inputImageCropper.destroy();
     }
@@ -180,6 +184,8 @@ function initializeCropper() {
         viewMode: 3,
         minContainerWidth: 1,
         minContainerHeight: 1,
+        data: initialData ?? null,
+        ready: onReady ?? null,
         cropend() {
             overridePixelArray = new Array(targetResolution[0] * targetResolution[1] * 4).fill(null);
             resetOverrideHistory();
@@ -198,7 +204,7 @@ window.addEventListener("resize", () => {
 
 let depthEnabled = false;
 
-function enableDepth() {
+function enableDepth(dontLog) {
     [...document.getElementsByClassName("3d-selector-tabs")].forEach((tabsList) => (tabsList.hidden = false));
     document.getElementById("enable-depth-button-container").hidden = true;
 
@@ -211,11 +217,14 @@ function enableDepth() {
     create3dPreview();
     depthEnabled = true;
 
+    if (dontLog) {
+        return;
+    }
     perfLoggingDatabase.ref("enable-depth-count/total").transaction(incrementTransaction);
     const loggingTimestamp = Math.floor((Date.now() - (Date.now() % 8.64e7)) / 1000); // 8.64e+7 = ms in day
     perfLoggingDatabase.ref("enable-depth-count/per-day/" + loggingTimestamp).transaction(incrementTransaction);
 }
-document.getElementById("enable-depth-button").addEventListener("click", enableDepth);
+document.getElementById("enable-depth-button").addEventListener("click", () => enableDepth());
 if (window.location.href.includes("enable3d")) {
     enableDepth();
 }
@@ -344,16 +353,7 @@ function handleResolutionChange() {
     overridePixelArray = new Array(targetResolution[0] * targetResolution[1] * 4).fill(null);
     resetOverrideHistory();
     overrideDepthPixelArray = new Array(targetResolution[0] * targetResolution[1] * 4).fill(null);
-    document.getElementById("width-text").title = `${(targetResolution[0] * PIXEL_WIDTH_CM).toFixed(1)} cm, ${(
-        targetResolution[0] *
-        PIXEL_WIDTH_CM *
-        INCHES_IN_CM
-    ).toFixed(1)}″`;
-    document.getElementById("height-text").title = `${(targetResolution[1] * PIXEL_WIDTH_CM).toFixed(1)} cm, ${(
-        targetResolution[1] *
-        PIXEL_WIDTH_CM *
-        INCHES_IN_CM
-    ).toFixed(1)}″`;
+    updateResolutionTitles();
     $('[data-toggle="tooltip"]').tooltip("dispose");
     $('[data-toggle="tooltip"]').tooltip();
     initializeCropper();
@@ -514,27 +514,31 @@ PIXEL_TYPE_OPTIONS.forEach((part) => {
     option.textContent = part.name;
     option.value = part.number;
     option.addEventListener("click", () => {
-        document.getElementById("bricklink-piece-button").innerHTML = part.name;
-        selectedPixelPartNumber = part.number;
-        const isVariable = ("" + selectedPixelPartNumber).match("^variable.*$");
-        document.getElementById("pixel-dimensions-container-wrapper").hidden = !isVariable;
-
-        if (isVariable) {
-            const availableParts = [...document.getElementById("pixel-dimensions-container").children].forEach(
-                (input) => {
-                    const className = input.className;
-                    const uniqueVariablePixelName = selectedPixelPartNumber.replace("variable_", "");
-                    return (input.hidden = !className.includes(uniqueVariablePixelName));
-                }
-            );
-        }
-
-        onInfinitePieceCountChange();
-        updateForceInfinitePieceCountText();
+        setPixelPartNumber(part.number);
         runStep3();
     });
     bricklinkPieceOptions.appendChild(option);
 });
+
+// Updates the pixel piece type and its dependent UI, without rerunning anything
+function setPixelPartNumber(partNumber) {
+    const part = PIXEL_TYPE_OPTIONS.find((option) => option.number === partNumber);
+    document.getElementById("bricklink-piece-button").innerHTML = part.name;
+    selectedPixelPartNumber = part.number;
+    const isVariable = ("" + selectedPixelPartNumber).match("^variable.*$");
+    document.getElementById("pixel-dimensions-container-wrapper").hidden = !isVariable;
+
+    if (isVariable) {
+        const availableParts = [...document.getElementById("pixel-dimensions-container").children].forEach((input) => {
+            const className = input.className;
+            const uniqueVariablePixelName = selectedPixelPartNumber.replace("variable_", "");
+            return (input.hidden = !className.includes(uniqueVariablePixelName));
+        });
+    }
+
+    onInfinitePieceCountChange();
+    updateForceInfinitePieceCountText();
+}
 
 function isBleedthroughEnabled() {
     return [PIXEL_TYPE_OPTIONS[0].number, PIXEL_TYPE_OPTIONS[1].number].includes(selectedPixelPartNumber);
@@ -1221,6 +1225,9 @@ document.getElementById("reset-contrast-button").addEventListener(
 );
 
 function runStep1() {
+    if (inputImageCropper == null) {
+        return; // no input image yet
+    }
     disableInteraction();
     updateStudCountText();
 
@@ -1504,6 +1511,8 @@ function runStep3() {
         colorDistanceFunction
     );
     document.getElementById("step-3-quantization-error").innerHTML = step3QuantizationError.toFixed(3);
+
+    scheduleAutoSave();
 
     setTimeout(() => {
         if (!isStep3ViewExpanded) {
@@ -2120,6 +2129,9 @@ function onStep3PaintingMouseLift() {
     shapeStartCell = null;
     shapeEndCell = null;
     shapePreviewCells = [];
+    if (wasPaintbrushUsed) {
+        scheduleAutoSave();
+    }
     // propogate changes
     if (!isStep3ViewExpanded && wasPaintbrushUsed) {
         disableInteraction();
@@ -3268,8 +3280,14 @@ document.getElementById("generate-depth-image").addEventListener("click", trigge
 
 const SERIALIZE_EDGE_LENGTH = 512;
 
-function handleInputImage(e, dontClearDepth, dontLog) {
+// restoredState is an auto saved project whose crop and overrides should be applied to this image
+function handleInputImage(e, dontClearDepth, dontLog, restoredState) {
     const reader = new FileReader();
+    if (restoredState != null) {
+        autoSaveInputImageBlob = e.target.files[0];
+    } else {
+        autoSaveInputImageBlob = null;
+    }
     reader.onload = function (event) {
         inputImage = new Image();
         inputImage.onload = function () {
@@ -3293,6 +3311,15 @@ function handleInputImage(e, dontClearDepth, dontLog) {
                 inputImagePixels[i] = 255;
             }
             drawPixelsOnCanvas(inputImagePixels, inputCanvas);
+
+            if (restoredState == null) {
+                const loadedImage = inputImage;
+                getAutoSaveImageBlob(loadedImage).then((blob) => {
+                    if (inputImage === loadedImage) {
+                        autoSaveInputImageBlob = blob;
+                    }
+                });
+            }
 
             if (!dontClearDepth) {
                 inputDepthCanvas.width = SERIALIZE_EDGE_LENGTH;
@@ -3328,8 +3355,19 @@ function handleInputImage(e, dontClearDepth, dontLog) {
             overridePixelArray = new Array(targetResolution[0] * targetResolution[1] * 4).fill(null);
             overrideDepthPixelArray = new Array(targetResolution[0] * targetResolution[1] * 4).fill(null);
             resetOverrideHistory();
-            initializeCropper();
-            runStep1();
+            if (restoredState != null) {
+                const expectedOverrideLength = targetResolution[0] * targetResolution[1] * 4;
+                if (restoredState.overridePixelArray?.length === expectedOverrideLength) {
+                    overridePixelArray = restoredState.overridePixelArray;
+                }
+                if (restoredState.overrideDepthPixelArray?.length === expectedOverrideLength) {
+                    overrideDepthPixelArray = restoredState.overrideDepthPixelArray;
+                }
+                initializeCropper(restoredState.crop, runStep1);
+            } else {
+                initializeCropper();
+                runStep1();
+            }
         }, 50); // TODO: find better way to check that input is finished
 
         if (!dontLog) {
@@ -3491,3 +3529,319 @@ document.getElementById("toggle-tech-talk-button").addEventListener("click", () 
 });
 
 enableInteraction(); // enable interaction once everything has loaded in
+
+// Auto save - keeps the current project in IndexedDB so it survives reloads and closed tabs
+const AUTO_SAVE_DB_NAME = "lego-art-remix-auto-save";
+const AUTO_SAVE_STORE_NAME = "projects";
+const AUTO_SAVE_KEY = "current";
+const AUTO_SAVE_FORMAT_VERSION = 1;
+const AUTO_SAVE_DELAY_MS = 1000;
+const AUTO_SAVE_IMAGE_MAX_EDGE_LENGTH = 1024;
+
+// slider id -> [label id, label formatter]
+const AUTO_SAVE_SLIDERS = {
+    "hue-slider": ["hue-text", (value) => value + "<span>&#176;</span>"],
+    "saturation-slider": ["saturation-text", (value) => value + "%"],
+    "value-slider": ["value-text", (value) => value + "%"],
+    "brightness-slider": ["brightness-text", (value) => (value > 0 ? "+" : "") + value],
+    "contrast-slider": ["contrast-text", (value) => (value > 0 ? "+" : "") + value],
+    "color-tie-grouping-factor-slider": ["color-tie-grouping-factor-text", (value) => value],
+    "num-depth-levels-slider": ["num-depth-levels-text", (value) => value],
+    "3d-effect-intensity": [null, null],
+};
+const AUTO_SAVE_CHECKBOXES = [
+    "infinite-piece-count-check",
+    "high-quality-instructions-check",
+    "high-quality-depth-instructions-check",
+];
+
+let autoSaveInputImageBlob = null; // a downscaled copy of the input image
+let autoSaveTimeout = null;
+let isAutoSaveEnabled = true;
+let autoSaveDatabasePromise = null;
+
+function openAutoSaveDatabase() {
+    if (autoSaveDatabasePromise == null) {
+        autoSaveDatabasePromise = new Promise((resolve, reject) => {
+            if (!window.indexedDB) {
+                reject(new Error("IndexedDB is not supported"));
+                return;
+            }
+            const request = window.indexedDB.open(AUTO_SAVE_DB_NAME, 1);
+            request.onupgradeneeded = () => request.result.createObjectStore(AUTO_SAVE_STORE_NAME);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+    return autoSaveDatabasePromise;
+}
+
+async function runAutoSaveRequest(mode, getRequest) {
+    const database = await openAutoSaveDatabase();
+    return new Promise((resolve, reject) => {
+        const transaction = database.transaction(AUTO_SAVE_STORE_NAME, mode);
+        const request = getRequest(transaction.objectStore(AUTO_SAVE_STORE_NAME));
+        transaction.oncomplete = () => resolve(request.result);
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(transaction.error);
+    });
+}
+
+function canvasToBlob(canvas) {
+    return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+}
+
+function loadImageFromBlob(blob) {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(blob);
+        const image = new Image();
+        image.onload = () => {
+            URL.revokeObjectURL(url);
+            resolve(image);
+        };
+        image.onerror = (err) => {
+            URL.revokeObjectURL(url);
+            reject(err);
+        };
+        image.src = url;
+    });
+}
+
+function getAutoSaveImageBlob(image) {
+    const scale = Math.min(1, AUTO_SAVE_IMAGE_MAX_EDGE_LENGTH / Math.max(image.width, image.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.width * scale));
+    canvas.height = Math.max(1, Math.round(image.height * scale));
+    canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvasToBlob(canvas);
+}
+
+function getCustomStudMapFromTable() {
+    const studMap = {};
+    const sortedStuds = [];
+    Array.from(customStudTableBody.children).forEach((stud) => {
+        const rgb = stud.children[0].children[0].children[0].children[0].style.backgroundColor
+            .replace("rgb(", "")
+            .replace(")", "")
+            .split(/,\s*/)
+            .map((shade) => parseInt(shade));
+        const studHex = rgbToHex(rgb[0], rgb[1], rgb[2]);
+        if (studMap[studHex] == null) {
+            sortedStuds.push(studHex);
+        }
+        studMap[studHex] = (studMap[studHex] || 0) + parseInt(stud.children[1].children[0].children[0].value);
+    });
+    return { studMap, sortedStuds };
+}
+
+function getCheckboxValues(containerId) {
+    const values = {};
+    [...document.getElementById(containerId).getElementsByTagName("input")].forEach(
+        (input) => (values[input.name] = input.checked)
+    );
+    return values;
+}
+
+function setCheckboxValues(containerId, values) {
+    [...document.getElementById(containerId).getElementsByTagName("input")].forEach((input) => {
+        if (values?.[input.name] != null && !input.className.includes("always-disabled")) {
+            input.checked = values[input.name];
+        }
+    });
+}
+
+async function getAutoSaveState() {
+    const sliderValues = {};
+    Object.keys(AUTO_SAVE_SLIDERS).forEach((id) => (sliderValues[id] = document.getElementById(id).value));
+    const checkboxValues = {};
+    AUTO_SAVE_CHECKBOXES.forEach((id) => (checkboxValues[id] = document.getElementById(id).checked));
+    return {
+        version: AUTO_SAVE_FORMAT_VERSION,
+        savedAt: Date.now(),
+        inputImage: autoSaveInputImageBlob,
+        depthImage: await canvasToBlob(inputDepthCanvas),
+        crop: inputImageCropper.getData(),
+        resolution: [Number(targetResolution[0]), Number(targetResolution[1])],
+        isResolutionLimitIncreased: document.getElementById("resolution-limit-increase-button").hidden,
+        sliderValues,
+        checkboxValues,
+        depthThresholds: [...document.getElementById("depth-threshold-sliders-containers").children].map(
+            (input) => input.value
+        ),
+        depthPlates: getCheckboxValues("depth-plates-container"),
+        pixelDimensions: getCheckboxValues("pixel-dimensions-container"),
+        depthEnabled,
+        quantizationAlgorithm,
+        distanceFunction: getSelectedDistanceFunctionKey(),
+        interpolationAlgorithm: selectedInterpolationAlgorithm,
+        tiebreakTechnique: selectedTiebreakTechnique,
+        pixelPartNumber: selectedPixelPartNumber,
+        customStudMap: getCustomStudMapFromTable(),
+        startingStudMapName: document.getElementById("select-starting-custom-stud-map-button").innerHTML,
+        startingStudMapDescription: document.getElementById("input-stud-map-description").innerHTML,
+        overridePixelArray,
+        overrideDepthPixelArray,
+    };
+}
+
+async function saveAutoSaveState() {
+    autoSaveTimeout = null;
+    if (!isAutoSaveEnabled || inputImageCropper == null) {
+        return;
+    }
+    if (autoSaveInputImageBlob == null) {
+        scheduleAutoSave(); // the input image is still being encoded
+        return;
+    }
+    try {
+        const state = await getAutoSaveState();
+        if (isAutoSaveEnabled) {
+            await runAutoSaveRequest("readwrite", (store) => store.put(state, AUTO_SAVE_KEY));
+        }
+    } catch (err) {
+        console.error("Could not auto save: ", err);
+    }
+}
+
+function scheduleAutoSave() {
+    if (!isAutoSaveEnabled) {
+        return;
+    }
+    clearTimeout(autoSaveTimeout);
+    autoSaveTimeout = setTimeout(saveAutoSaveState, AUTO_SAVE_DELAY_MS);
+}
+
+function flushAutoSave() {
+    if (autoSaveTimeout != null) {
+        clearTimeout(autoSaveTimeout);
+        saveAutoSaveState();
+    }
+}
+
+async function clearAutoSaveState() {
+    isAutoSaveEnabled = false;
+    clearTimeout(autoSaveTimeout);
+    autoSaveTimeout = null;
+    await runAutoSaveRequest("readwrite", (store) => store.delete(AUTO_SAVE_KEY));
+}
+
+// Applies every saved setting, then loads the saved images, which reruns everything
+async function restoreAutoSaveState(state) {
+    if (state.isResolutionLimitIncreased) {
+        document.getElementById("height-slider").max = 256;
+        document.getElementById("width-slider").max = 256;
+        document.getElementById("resolution-limit-increase-button").hidden = true;
+    }
+    ["width", "height"].forEach((dimension, i) => {
+        document.getElementById(dimension + "-slider").value = state.resolution[i];
+        document.getElementById(dimension + "-text").innerHTML = state.resolution[i];
+    });
+    targetResolution = [...state.resolution];
+    updateResolutionTitles();
+
+    Object.keys(AUTO_SAVE_SLIDERS).forEach((id) => {
+        const value = state.sliderValues?.[id];
+        if (value == null) {
+            return;
+        }
+        document.getElementById(id).value = value;
+        const [textId, formatter] = AUTO_SAVE_SLIDERS[id];
+        if (textId != null) {
+            document.getElementById(textId).innerHTML = formatter(document.getElementById(id).value);
+        }
+    });
+    AUTO_SAVE_CHECKBOXES.forEach((id) => {
+        if (state.checkboxValues?.[id] != null) {
+            document.getElementById(id).checked = state.checkboxValues[id];
+        }
+    });
+    setCheckboxValues("depth-plates-container", state.depthPlates);
+    setCheckboxValues("pixel-dimensions-container", state.pixelDimensions);
+
+    const tiebreakTechnique = TIEBREAK_TECHNIQUES.find((technique) => technique.value === state.tiebreakTechnique);
+    if (tiebreakTechnique != null) {
+        selectedTiebreakTechnique = tiebreakTechnique.value;
+        document.getElementById("color-ties-resolution-button").innerHTML = "Strategy: " + tiebreakTechnique.name;
+    }
+    if (state.interpolationAlgorithm != null) {
+        selectedInterpolationAlgorithm = state.interpolationAlgorithm;
+        document.getElementById("interpolation-algorithm-button").innerHTML = getInterpolationAlgorithm(
+            state.interpolationAlgorithm
+        ).name;
+    }
+    if (colorDistanceFunctionsInfo[state.distanceFunction] != null) {
+        colorDistanceFunction = colorDistanceFunctionsInfo[state.distanceFunction].func;
+        document.getElementById("distance-function-button").innerHTML =
+            colorDistanceFunctionsInfo[state.distanceFunction].name;
+    }
+    if (quantizationAlgorithmsInfo[state.quantizationAlgorithm] != null) {
+        setQuantizationAlgorithm(state.quantizationAlgorithm);
+    }
+    if (PIXEL_TYPE_OPTIONS.some((option) => option.number === state.pixelPartNumber)) {
+        setPixelPartNumber(state.pixelPartNumber);
+    }
+
+    if (state.customStudMap?.sortedStuds?.length > 0) {
+        populateCustomStudSelectors(state.customStudMap, false);
+        runCustomStudMap(true);
+        document.getElementById("select-starting-custom-stud-map-button").innerHTML = state.startingStudMapName;
+        document.getElementById("input-stud-map-description").innerHTML = state.startingStudMapDescription;
+    }
+    onInfinitePieceCountChange();
+
+    if (state.depthEnabled) {
+        if (!depthEnabled) {
+            enableDepth(true); // rebuilds the depth threshold sliders
+        } else {
+            onDepthMapCountChange();
+        }
+        const thresholdInputs = [...document.getElementById("depth-threshold-sliders-containers").children];
+        if (state.depthThresholds?.length === thresholdInputs.length) {
+            thresholdInputs.forEach((input, i) => (input.value = state.depthThresholds[i]));
+        }
+    }
+
+    const depthImage = await loadImageFromBlob(state.depthImage);
+    inputDepthCanvas.width = SERIALIZE_EDGE_LENGTH;
+    inputDepthCanvas.height = SERIALIZE_EDGE_LENGTH;
+    inputDepthCanvasContext.drawImage(depthImage, 0, 0, SERIALIZE_EDGE_LENGTH, SERIALIZE_EDGE_LENGTH);
+
+    handleInputImage({ target: { files: [state.inputImage] } }, true, true, state);
+    document.getElementById("auto-save-restored-alert").hidden = false;
+}
+
+document.addEventListener("change", scheduleAutoSave); // settings that don't rerun step 3
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+        flushAutoSave();
+    }
+});
+window.addEventListener("pagehide", flushAutoSave);
+
+document.getElementById("auto-save-start-over-button").addEventListener("click", async (e) => {
+    e.preventDefault();
+    disableInteraction();
+    try {
+        await clearAutoSaveState();
+    } catch (err) {
+        console.error("Could not clear auto save: ", err);
+    }
+    window.location.reload();
+});
+
+// Don't replace an image that was explicitly linked to
+if (imageURL == null) {
+    disableInteraction();
+    runAutoSaveRequest("readonly", (store) => store.get(AUTO_SAVE_KEY))
+        .then((state) => {
+            if (state?.version === AUTO_SAVE_FORMAT_VERSION && state.inputImage != null && inputImageCropper == null) {
+                return restoreAutoSaveState(state);
+            }
+            enableInteraction();
+        })
+        .catch((err) => {
+            console.error("Could not restore auto save: ", err);
+            runAutoSaveRequest("readwrite", (store) => store.delete(AUTO_SAVE_KEY)).catch(() => {});
+            enableInteraction();
+        });
+}
