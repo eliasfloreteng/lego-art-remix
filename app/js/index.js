@@ -744,26 +744,30 @@ Object.keys(quantizationAlgorithmsInfo).forEach((key) => {
     option.textContent = algorithm.name;
     option.value = key;
     option.addEventListener("click", () => {
-        document.getElementById("quantization-algorithm-button").innerHTML = algorithm.name;
-        quantizationAlgorithm = key;
-
-        // Only 2 phase supports color tie resolution
-        document.getElementById("color-ties-resolution-section").hidden = quantizationAlgorithm != "twoPhase";
-
-        const isTraditionalErrorDithering = Object.keys(quantizationAlgorithmToTraditionalDitheringKernel).includes(
-            quantizationAlgorithm
-        );
-        [...document.getElementsByClassName("traditional-dithering-algorithm-warning")].forEach(
-            (item) => (item.hidden = !isTraditionalErrorDithering)
-        );
-        updateForceInfinitePieceCountText();
-
+        setQuantizationAlgorithm(key);
         disableInteraction();
-        onInfinitePieceCountChange();
         runStep3();
     });
     document.getElementById("quantization-algorithm-options").appendChild(option);
 });
+
+// Updates the quantization algorithm and its dependent UI, without rerunning anything
+function setQuantizationAlgorithm(key) {
+    document.getElementById("quantization-algorithm-button").innerHTML = quantizationAlgorithmsInfo[key].name;
+    quantizationAlgorithm = key;
+
+    // Only 2 phase supports color tie resolution
+    document.getElementById("color-ties-resolution-section").hidden = quantizationAlgorithm != "twoPhase";
+
+    const isTraditionalErrorDithering = Object.keys(quantizationAlgorithmToTraditionalDitheringKernel).includes(
+        quantizationAlgorithm
+    );
+    [...document.getElementsByClassName("traditional-dithering-algorithm-warning")].forEach(
+        (item) => (item.hidden = !isTraditionalErrorDithering)
+    );
+    updateForceInfinitePieceCountText();
+    onInfinitePieceCountChange();
+}
 
 const DIVIDER = "DIVIDER";
 const STUD_MAP_KEYS = Object.keys(STUD_MAPS);
@@ -1252,9 +1256,10 @@ function runStep1() {
     }, 1); // TODO: find better way to check that input is finished
 }
 
-function runStep2() {
+// Crops, resizes and color adjusts the input image - the pixels that step 3 quantizes
+function getStep2PixelArray(interpolationAlgorithmValue) {
     let inputPixelArray;
-    const interpolationAlgorithm = getInterpolationAlgorithm(selectedInterpolationAlgorithm);
+    const interpolationAlgorithm = getInterpolationAlgorithm(interpolationAlgorithmValue);
     if (interpolationAlgorithm.canvasSmoothing !== undefined) {
         // Let the browser rescale the image
         const croppedCanvas = inputImageCropper.getCroppedCanvas({
@@ -1296,6 +1301,11 @@ function runStep2() {
         filteredPixelArray,
         Number(document.getElementById("contrast-slider").value)
     );
+    return filteredPixelArray;
+}
+
+function runStep2() {
+    const filteredPixelArray = getStep2PixelArray(selectedInterpolationAlgorithm);
     step2Canvas.width = targetResolution[0];
     step2Canvas.height = targetResolution[1];
     drawPixelsOnCanvas(filteredPixelArray, step2Canvas);
@@ -1388,38 +1398,36 @@ function getVariablePixelAvailablePartDimensions() {
 // only non null if pixel piece is variable
 let step3VariablePixelPieceDimensions = null;
 
+// Aligns pixels to the colors of the selected stud map, without applying overrides
+function quantizePixelArray(pixelArray, quantizationAlgorithmKey, distanceFunction) {
+    const studMap = isBleedthroughEnabled() ? getDarkenedStudMap(selectedStudMap) : selectedStudMap;
+    if (quantizationAlgorithmKey === "twoPhase") {
+        return alignPixelsToStudMap(pixelArray, studMap, distanceFunction);
+    } else if (quantizationAlgorithmKey === "greedy" || quantizationAlgorithmKey === "greedyWithDithering") {
+        return correctPixelsForAvailableStudsWithGreedyDynamicDithering(
+            studMap,
+            pixelArray,
+            targetResolution[0],
+            distanceFunction,
+            quantizationAlgorithmKey !== "greedyWithDithering", // skipDithering
+            true // assumeInfinitePixelCounts
+        );
+    }
+    // assume we're dealing with a traditional error dithering algorithm
+    return alignPixelsWithTraditionalDithering(
+        studMap,
+        pixelArray,
+        targetResolution[0],
+        distanceFunction,
+        quantizationAlgorithmToTraditionalDitheringKernel[quantizationAlgorithmKey]
+    );
+}
+
 function runStep3() {
     const fiteredPixelArray = getPixelArrayFromCanvas(step2Canvas);
 
-    let alignedPixelArray;
-
     // TODO: Apply overrides separately
-    if (quantizationAlgorithm === "twoPhase") {
-        alignedPixelArray = alignPixelsToStudMap(
-            fiteredPixelArray,
-            isBleedthroughEnabled() ? getDarkenedStudMap(selectedStudMap) : selectedStudMap,
-            colorDistanceFunction
-        );
-    } else if (quantizationAlgorithm === "greedy" || quantizationAlgorithm === "greedyWithDithering") {
-        alignedPixelArray = correctPixelsForAvailableStudsWithGreedyDynamicDithering(
-            isBleedthroughEnabled() ? getDarkenedStudMap(selectedStudMap) : selectedStudMap,
-            fiteredPixelArray,
-            targetResolution[0],
-            colorDistanceFunction,
-            quantizationAlgorithm !== "greedyWithDithering", // skipDithering
-            true // assumeInfinitePixelCounts
-        );
-    } else {
-        // assume we're dealing with a traditional error dithering algorithm
-        const ditheringKernel = quantizationAlgorithmToTraditionalDitheringKernel[quantizationAlgorithm];
-        alignedPixelArray = alignPixelsWithTraditionalDithering(
-            isBleedthroughEnabled() ? getDarkenedStudMap(selectedStudMap) : selectedStudMap,
-            fiteredPixelArray,
-            targetResolution[0],
-            colorDistanceFunction,
-            ditheringKernel
-        );
-    }
+    let alignedPixelArray = quantizePixelArray(fiteredPixelArray, quantizationAlgorithm, colorDistanceFunction);
 
     // the un-overridden colors, in display space (i.e. not darkened for bleedthrough)
     step3BasePixelArray = isBleedthroughEnabled()
@@ -1531,6 +1539,236 @@ function runStep3() {
         );
     }, 1); // TODO: find better way to check that input is finished
 }
+
+// Comparison grid - previews the mosaic for several settings side by side
+const COMPARISON_GRID_SCALING_FACTOR = 10;
+
+const COMPARISON_GRID_MODES = {
+    presets: {
+        getSettings: () => [
+            { name: "Default", interpolation: "default", quantization: "twoPhase", distance: "ciede2000" },
+            { name: "Smooth", interpolation: "browserHigh", quantization: "twoPhase", distance: "ciede2000" },
+            { name: "Box Average", interpolation: "box", quantization: "twoPhase", distance: "ciede2000" },
+            { name: "Sharp (Lanczos)", interpolation: "lanczos3", quantization: "twoPhase", distance: "ciede2000" },
+            { name: "Perceptual (LAB)", interpolation: "box", quantization: "twoPhase", distance: "euclideanLAB" },
+            { name: "Floyd-Steinberg", interpolation: "box", quantization: "floydSteinberg", distance: "euclideanRGB" },
+            { name: "Atkinson", interpolation: "box", quantization: "atkinsonDithering", distance: "euclideanRGB" },
+            {
+                name: "Greedy Gaussian",
+                interpolation: "box",
+                quantization: "greedyWithDithering",
+                distance: "ciede2000",
+            },
+        ],
+    },
+    quantization: {
+        getSettings: () =>
+            Object.keys(quantizationAlgorithmsInfo).map((key) => ({
+                name: quantizationAlgorithmsInfo[key].name,
+                interpolation: selectedInterpolationAlgorithm,
+                quantization: key,
+                distance: getSelectedDistanceFunctionKey(),
+            })),
+    },
+    distance: {
+        getSettings: () =>
+            Object.keys(colorDistanceFunctionsInfo).map((key) => ({
+                name: colorDistanceFunctionsInfo[key].name,
+                interpolation: selectedInterpolationAlgorithm,
+                quantization: quantizationAlgorithm,
+                distance: key,
+            })),
+    },
+    interpolation: {
+        getSettings: () =>
+            [
+                "default",
+                "browserHigh",
+                "nearestCenter",
+                "box",
+                "bilinear",
+                "catmullRom",
+                "mitchell",
+                "lanczos3",
+                "gaussian",
+                "medianPooling",
+                "modePooling",
+                "medoidPooling",
+            ].map((value) => ({
+                name: getInterpolationAlgorithm(value).name,
+                interpolation: value,
+                quantization: quantizationAlgorithm,
+                distance: getSelectedDistanceFunctionKey(),
+            })),
+    },
+};
+
+let selectedComparisonGridMode = "presets";
+// incremented on every generation so that stale runs stop drawing
+let comparisonGridGeneration = 0;
+
+function getSelectedDistanceFunctionKey() {
+    return Object.keys(colorDistanceFunctionsInfo).find(
+        (key) => colorDistanceFunctionsInfo[key].func === colorDistanceFunction
+    );
+}
+
+function getComparisonGridSettingsDescription(settings) {
+    return [
+        getInterpolationAlgorithm(settings.interpolation).name,
+        quantizationAlgorithmsInfo[settings.quantization].name,
+        colorDistanceFunctionsInfo[settings.distance].name,
+    ].join(" · ");
+}
+
+function isCurrentComparisonGridSettings(settings) {
+    return (
+        settings.interpolation === selectedInterpolationAlgorithm &&
+        settings.quantization === quantizationAlgorithm &&
+        settings.distance === getSelectedDistanceFunctionKey()
+    );
+}
+
+function applyComparisonGridSettings(settings) {
+    selectedInterpolationAlgorithm = settings.interpolation;
+    document.getElementById("interpolation-algorithm-button").innerHTML = getInterpolationAlgorithm(
+        settings.interpolation
+    ).name;
+    colorDistanceFunction = colorDistanceFunctionsInfo[settings.distance].func;
+    document.getElementById("distance-function-button").innerHTML = colorDistanceFunctionsInfo[settings.distance].name;
+    setQuantizationAlgorithm(settings.quantization);
+    updateComparisonGridSelection();
+    disableInteraction();
+    runStep1();
+}
+
+function updateComparisonGridSelection() {
+    [...document.getElementById("comparison-grid").children].forEach((tile) => {
+        tile.children[0].className = isCurrentComparisonGridSettings(tile.comparisonSettings)
+            ? "card comparison-grid-tile comparison-grid-tile-selected"
+            : "card comparison-grid-tile";
+    });
+}
+
+function createComparisonGridTile(settings) {
+    const column = document.createElement("div");
+    column.className = "col-6 col-md-4 col-lg-3";
+    column.comparisonSettings = settings;
+
+    const tile = document.createElement("div");
+    tile.className = "card comparison-grid-tile";
+    tile.title = "Use these settings";
+    tile.addEventListener("click", () => applyComparisonGridSettings(settings));
+
+    const canvas = document.createElement("canvas");
+    canvas.style.width = "100%";
+    canvas.style.aspectRatio = `${targetResolution[0]} / ${targetResolution[1]}`;
+    tile.appendChild(canvas);
+
+    const name = document.createElement("div");
+    name.style.fontWeight = "600";
+    name.style.marginTop = "4px";
+    name.textContent = settings.name;
+    tile.appendChild(name);
+
+    const description = document.createElement("small");
+    description.textContent = getComparisonGridSettingsDescription(settings);
+    tile.appendChild(description);
+
+    const error = document.createElement("small");
+    error.style.display = "block";
+    error.textContent = "Rendering...";
+    tile.appendChild(error);
+
+    column.appendChild(tile);
+    return { column, canvas, error };
+}
+
+function renderComparisonGridTile(settings, canvas, errorText) {
+    // round trip through a canvas so that we quantize exactly what step 3 would
+    const step2BufferCanvas = document.createElement("canvas");
+    step2BufferCanvas.width = targetResolution[0];
+    step2BufferCanvas.height = targetResolution[1];
+    drawPixelsOnCanvas(getStep2PixelArray(settings.interpolation), step2BufferCanvas);
+    const step2PixelArray = getPixelArrayFromCanvas(step2BufferCanvas);
+
+    const distanceFunction = colorDistanceFunctionsInfo[settings.distance].func;
+    let alignedPixelArray = quantizePixelArray(step2PixelArray, settings.quantization, distanceFunction);
+    alignedPixelArray = getArrayWithOverridesApplied(
+        alignedPixelArray,
+        isBleedthroughEnabled() ? getDarkenedImage(overridePixelArray) : overridePixelArray
+    );
+
+    drawStudImageOnCanvas(
+        isBleedthroughEnabled()
+            ? revertDarkenedImage(
+                  alignedPixelArray,
+                  getDarkenedStudsToStuds(ALL_BRICKLINK_SOLID_COLORS.map((color) => color.hex))
+              )
+            : alignedPixelArray,
+        targetResolution[0],
+        COMPARISON_GRID_SCALING_FACTOR,
+        canvas,
+        // variable pieces need a full step 3 run to be laid out, so just show their pixels
+        ("" + selectedPixelPartNumber).match("^variable.*$") ? PIXEL_TYPE_OPTIONS[2].number : selectedPixelPartNumber
+    );
+    // measure every tile with the same distance function so that the errors are comparable
+    errorText.textContent =
+        "Error (CIEDE2000): " +
+        getAverageQuantizationError(
+            step2PixelArray,
+            alignedPixelArray,
+            colorDistanceFunctionsInfo.ciede2000.func
+        ).toFixed(3);
+}
+
+function generateComparisonGrid() {
+    if (inputImageCropper == null) {
+        return;
+    }
+    const generation = ++comparisonGridGeneration;
+    const grid = document.getElementById("comparison-grid");
+    grid.innerHTML = "";
+    const settingsList = COMPARISON_GRID_MODES[selectedComparisonGridMode].getSettings();
+    const tiles = settingsList.map((settings) => {
+        const tile = createComparisonGridTile(settings);
+        grid.appendChild(tile.column);
+        return tile;
+    });
+    updateComparisonGridSelection();
+
+    const progress = document.getElementById("comparison-grid-progress");
+    progress.hidden = false;
+    // render one tile at a time so the page stays responsive
+    const renderTile = (index) => {
+        if (generation !== comparisonGridGeneration) {
+            return;
+        }
+        if (index >= settingsList.length) {
+            progress.hidden = true;
+            return;
+        }
+        try {
+            renderComparisonGridTile(settingsList[index], tiles[index].canvas, tiles[index].error);
+        } catch (err) {
+            console.error(err);
+            tiles[index].error.textContent = "Failed to render";
+        }
+        setTimeout(() => renderTile(index + 1), 1);
+    };
+    setTimeout(() => renderTile(0), 1);
+}
+
+document.getElementById("comparison-grid-mode-options").addEventListener("click", (event) => {
+    const mode = event.target.dataset.mode;
+    if (!mode) {
+        return;
+    }
+    selectedComparisonGridMode = mode;
+    document.getElementById("comparison-grid-mode-button").innerHTML = event.target.textContent;
+    generateComparisonGrid();
+});
+document.getElementById("generate-comparison-grid-button").addEventListener("click", generateComparisonGrid);
 
 let isStep3ViewExpanded = false;
 
@@ -3065,6 +3303,9 @@ function handleInputImage(e, dontClearDepth, dontLog) {
         };
         inputImage.src = event.target.result;
         document.getElementById("steps-row").hidden = false;
+        document.getElementById("comparison-grid-row").hidden = false;
+        comparisonGridGeneration++;
+        document.getElementById("comparison-grid").innerHTML = "";
         document.getElementById("input-image-selector").innerHTML = "Reselect Input Image";
         document.getElementById("image-input-new").appendChild(document.getElementById("image-input"));
         document.getElementById("image-input-card").hidden = true;
