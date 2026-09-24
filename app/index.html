@@ -2516,14 +2516,21 @@
     <script>
       // note that the disableServiceWorker param only disables new service worker registration
       if ("serviceWorker" in navigator && !window.location.href.match(/disableServiceWorker/gi)) {
-        navigator.serviceWorker
-          .register("service-worker.js")
-          .then(function (registration) {
-            console.log("Service worker registration successful, scope is:", registration.scope);
-          })
-          .catch(function (error) {
-            console.error("Service worker registration failed, error:", error);
-          });
+        // Register only after the page has fully loaded. On a first visit the service worker
+        // precaches every asset, and doing that while the page itself is still loading makes
+        // iOS Safari kill the tab ("This webpage was reloaded because a problem occurred").
+        window.addEventListener("load", function () {
+          setTimeout(function () {
+            navigator.serviceWorker
+              .register("service-worker.js")
+              .then(function (registration) {
+                console.log("Service worker registration successful, scope is:", registration.scope);
+              })
+              .catch(function (error) {
+                console.error("Service worker registration failed, error:", error);
+              });
+          }, 3000);
+        });
       }
     </script>
 
