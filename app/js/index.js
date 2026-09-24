@@ -1855,6 +1855,7 @@ function onDepthOverrideChange(row, col, isIncrease) {
         ctx.arc(((i % width) * 2 + 1) * radius, (Math.floor(i / width) * 2 + 1) * radius, radius, 0, 2 * Math.PI);
         ctx.fillStyle = rgbToHex(upscaledPixelDisplayVal, upscaledPixelDisplayVal, upscaledPixelDisplayVal);
         ctx.fill();
+        scheduleAutoSave();
     } else {
         runStep3();
     }
@@ -3363,6 +3364,15 @@ function handleInputImage(e, dontClearDepth, dontLog, restoredState) {
                 if (restoredState.overrideDepthPixelArray?.length === expectedOverrideLength) {
                     overrideDepthPixelArray = restoredState.overrideDepthPixelArray;
                 }
+                const isValidHistory = (stack) =>
+                    Array.isArray(stack) && stack.every((entry) => entry?.length === expectedOverrideLength);
+                if (
+                    isValidHistory(restoredState.overrideUndoStack) &&
+                    isValidHistory(restoredState.overrideRedoStack)
+                ) {
+                    overrideUndoStack = restoredState.overrideUndoStack;
+                    overrideRedoStack = restoredState.overrideRedoStack;
+                }
                 initializeCropper(restoredState.crop, runStep1);
             } else {
                 initializeCropper();
@@ -3681,6 +3691,8 @@ async function getAutoSaveState() {
         startingStudMapDescription: document.getElementById("input-stud-map-description").innerHTML,
         overridePixelArray,
         overrideDepthPixelArray,
+        overrideUndoStack,
+        overrideRedoStack,
     };
 }
 
@@ -3818,8 +3830,10 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("pagehide", flushAutoSave);
 
-document.getElementById("auto-save-start-over-button").addEventListener("click", async (e) => {
-    e.preventDefault();
+async function resetProject() {
+    if (!window.confirm("Reset the project? This removes the image, settings and pixel edits saved in this browser.")) {
+        return;
+    }
     disableInteraction();
     try {
         await clearAutoSaveState();
@@ -3827,7 +3841,13 @@ document.getElementById("auto-save-start-over-button").addEventListener("click",
         console.error("Could not clear auto save: ", err);
     }
     window.location.reload();
+}
+
+document.getElementById("auto-save-start-over-button").addEventListener("click", (e) => {
+    e.preventDefault();
+    resetProject();
 });
+document.getElementById("reset-project-button").addEventListener("click", resetProject);
 
 // Don't replace an image that was explicitly linked to
 if (imageURL == null) {
