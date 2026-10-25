@@ -63,6 +63,7 @@ const interactionSelectors = [
     "resolution-limit-increase-button",
     "high-quality-instructions-check",
     "hide-unused-colors-instructions-check",
+    "export-mosaic-image-button",
     "input-depth-image-selector",
     "generate-depth-image",
     "num-depth-levels-slider",
@@ -3057,6 +3058,16 @@ function runStep4(asyncCallback) {
         enableInteraction();
     }
 }
+
+document.getElementById("export-mosaic-image-button").addEventListener("click", () => {
+    step4CanvasUpscaled.toBlob((blob) => {
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "Lego-Art-Remix-Mosaic.png";
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(link.href), 0);
+    }, "image/png");
+});
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
