@@ -347,6 +347,7 @@ let overrideRedoStack = [];
 function resetOverrideHistory() {
     overrideUndoStack = [];
     overrideRedoStack = [];
+    clearStep3Selection(); // the selected cells may not exist in the new image
 }
 
 function pushOverrideHistory() {
@@ -2311,6 +2312,82 @@ const PAINTBRUSH_SHAPE_TOOLS = [
     "filled-rectangle-tool-dropdown-option",
 ];
 
+const SELECT_AREA_TOOL = "select-area-tool-dropdown-option";
+const PASTE_TOOL = "paste-tool-dropdown-option";
+
+let step3Selection = null; // [minRow, minCol, maxRow, maxCol] of the selected area
+let selectionStartCell = null;
+let step3Clipboard = null; // rows of displayed hex colors copied from the selection
+let pastePreviewCells = []; // [pixel index, hex] pairs of the clipboard drawn under the cursor
+
+function setStep3Selection(startCell, endCell) {
+    const width = Number(targetResolution[0]);
+    const height = Number(targetResolution[1]);
+    step3Selection = [
+        Math.min(startCell[0], endCell[0]),
+        Math.min(startCell[1], endCell[1]),
+        Math.max(startCell[0], endCell[0]),
+        Math.max(startCell[1], endCell[1]),
+    ];
+    const [minRow, minCol, maxRow, maxCol] = step3Selection;
+    const outline = document.getElementById("step-3-selection-outline");
+    outline.style.top = `${(100 * minRow) / height}%`;
+    outline.style.left = `${(100 * minCol) / width}%`;
+    outline.style.height = `${(100 * (maxRow - minRow + 1)) / height}%`;
+    outline.style.width = `${(100 * (maxCol - minCol + 1)) / width}%`;
+    outline.hidden = false;
+}
+
+function clearStep3Selection() {
+    step3Selection = null;
+    selectionStartCell = null;
+    document.getElementById("step-3-selection-outline").hidden = true;
+}
+
+function copyStep3Selection() {
+    if (step3Selection == null || step3BasePixelArray == null) {
+        return;
+    }
+    const [minRow, minCol, maxRow, maxCol] = step3Selection;
+    step3Clipboard = [];
+    for (let row = minRow; row <= maxRow; row++) {
+        const clipboardRow = [];
+        for (let col = minCol; col <= maxCol; col++) {
+            clipboardRow.push(getStep3DisplayedHex(4 * (row * targetResolution[0] + col)));
+        }
+        step3Clipboard.push(clipboardRow);
+    }
+    document.getElementById(PASTE_TOOL).classList.remove("disabled");
+}
+
+// returns [pixel index, hex] pairs of the clipboard with its top left cell at row, col, clipped to the image
+function getPasteCells(row, col) {
+    const width = Number(targetResolution[0]);
+    const height = Number(targetResolution[1]);
+    const cells = [];
+    step3Clipboard.forEach((clipboardRow, rowOffset) => {
+        clipboardRow.forEach((hex, colOffset) => {
+            const r = row + rowOffset;
+            const c = col + colOffset;
+            if (r < height && c < width) {
+                cells.push([r * width + c, hex]);
+            }
+        });
+    });
+    return cells;
+}
+
+function clearPastePreview() {
+    pastePreviewCells.forEach(([i]) => drawStep3Cell(i, getStep3DisplayedHex(4 * i)));
+    pastePreviewCells = [];
+}
+
+function updatePastePreview(row, col) {
+    clearPastePreview();
+    pastePreviewCells = getPasteCells(row, col);
+    pastePreviewCells.forEach(([i, hex]) => drawStep3Cell(i, hex));
+}
+
 let isStep3MouseDown = false;
 let activePaintbrushHex = null; // the color being painted with while the mouse is down
 let wasPaintbrushUsed = false; // only propogate changes on mouse leave if this is true
@@ -2353,7 +2430,13 @@ function onStep3PaintingMouseLift() {
         shapePreviewCells.forEach((i) => setStep3CellOverride(i, activePaintbrushHex));
         wasPaintbrushUsed = true;
     }
+    if (isStep3MouseDown && selectedPaintbrushTool === PASTE_TOOL && pastePreviewCells.length > 0) {
+        pushOverrideHistory();
+        pastePreviewCells.forEach(([i, hex]) => setStep3CellOverride(i, hex));
+        wasPaintbrushUsed = true;
+    }
     isStep3MouseDown = false;
+    selectionStartCell = null;
     activePaintbrushHex = null;
     lastBrushCell = null;
     shapeStartCell = null;
@@ -2405,6 +2488,11 @@ step3CanvasUpscaled.addEventListener(
         } else if (PAINTBRUSH_SHAPE_TOOLS.includes(selectedPaintbrushTool)) {
             shapeStartCell = [row, col];
             updateShapePreview(row, col);
+        } else if (selectedPaintbrushTool === SELECT_AREA_TOOL) {
+            selectionStartCell = [row, col];
+            setStep3Selection(selectionStartCell, selectionStartCell);
+        } else if (selectedPaintbrushTool === PASTE_TOOL) {
+            updatePastePreview(row, col); // placed on mouse lift, so touches can drag it into place
         } else {
             // dropper tool
             onCherryPickColor(row, col);
@@ -2416,6 +2504,12 @@ step3CanvasUpscaled.addEventListener(
 let selectedPaintbrushTool = "paintbrush-tool-dropdown-option";
 
 function selectPaintbrushTool(toolId) {
+    if (toolId === PASTE_TOOL && step3Clipboard == null) {
+        return; // nothing to paste yet
+    }
+    if (selectedPaintbrushTool === PASTE_TOOL) {
+        clearPastePreview();
+    }
     selectedPaintbrushTool = toolId;
     document.getElementById("paintbrush-color-dropdown").disabled = !PAINTBRUSH_TOOLS_USING_COLOR.includes(toolId);
     document.getElementById("paintbrush-tool-selection-dropdown").innerHTML =
@@ -2455,6 +2549,8 @@ function redoOverrideChange() {
 
 document.getElementById("undo-overrides-button").addEventListener("click", undoOverrideChange);
 document.getElementById("redo-overrides-button").addEventListener("click", redoOverrideChange);
+document.getElementById("copy-selection-button").addEventListener("click", copyStep3Selection);
+document.getElementById("paste-selection-button").addEventListener("click", () => selectPaintbrushTool(PASTE_TOOL));
 
 const PAINTBRUSH_TOOL_SHORTCUTS = {
     b: "paintbrush-tool-dropdown-option",
@@ -2465,6 +2561,7 @@ const PAINTBRUSH_TOOL_SHORTCUTS = {
     l: "line-tool-dropdown-option",
     u: "rectangle-tool-dropdown-option",
     f: "filled-rectangle-tool-dropdown-option",
+    m: SELECT_AREA_TOOL,
 };
 
 document.addEventListener("keydown", (event) => {
@@ -2484,6 +2581,12 @@ document.addEventListener("keydown", (event) => {
         } else if ((key === "z" && event.shiftKey) || key === "y") {
             event.preventDefault();
             redoOverrideChange();
+        } else if (key === "c" && step3Selection != null && !event.shiftKey && window.getSelection().isCollapsed) {
+            event.preventDefault();
+            copyStep3Selection();
+        } else if (key === "v" && step3Clipboard != null && !event.shiftKey) {
+            event.preventDefault();
+            selectPaintbrushTool(PASTE_TOOL);
         }
         return;
     }
@@ -2496,6 +2599,8 @@ document.addEventListener("keydown", (event) => {
         setStep3BrushSize(step3BrushSize - 1);
     } else if (event.key === "]") {
         setStep3BrushSize(step3BrushSize + 1);
+    } else if (event.key === "Escape") {
+        clearStep3Selection();
     }
 });
 
@@ -2518,7 +2623,18 @@ function onMouseMoveOverStep3Canvas(event) {
             }
         } else if (selectedPaintbrushTool === "dropdown-tool-dropdown-option") {
             onCherryPickColor(row, col);
+        } else if (selectedPaintbrushTool === SELECT_AREA_TOOL && selectionStartCell != null) {
+            setStep3Selection(selectionStartCell, [row, col]);
+        } else if (selectedPaintbrushTool === PASTE_TOOL) {
+            updatePastePreview(row, col);
         }
+        return;
+    }
+
+    if (selectedPaintbrushTool === PASTE_TOOL) {
+        // show the clipboard under the cursor instead of the hover highlight
+        clearStep3HoverHighlight();
+        updatePastePreview(row, col);
         return;
     }
 
@@ -2540,6 +2656,9 @@ step3CanvasUpscaled.addEventListener(
             clearStep3HoverHighlight();
         }
         onStep3PaintingMouseLift();
+        if (step3BasePixelArray != null) {
+            clearPastePreview();
+        }
     },
     false
 );

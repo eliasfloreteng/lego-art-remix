@@ -115,6 +115,23 @@
         /* cursor: crosshair; TODO: Better cursor*/
       }
 
+      #step-3-canvas-upscaled-container {
+        position: relative;
+      }
+
+      #step-3-canvas-upscaled-container canvas {
+        display: block;
+      }
+
+      #step-3-selection-outline {
+        position: absolute;
+        box-sizing: border-box;
+        border: 2px dashed #ffffff;
+        box-shadow: 0 0 0 1px #000000, inset 0 0 0 1px #000000;
+        background-color: rgba(255, 255, 255, 0.15);
+        pointer-events: none;
+      }
+
       .card {
         background-color: rgba(255, 255, 255, 0.6);
       }
@@ -1081,7 +1098,10 @@
               aria-labelledby="step-3-color-tab"
             >
               <canvas id="step-3-canvas" hidden></canvas>
-              <canvas id="step-3-canvas-upscaled" style="width: 100%"></canvas>
+              <div id="step-3-canvas-upscaled-container">
+                <canvas id="step-3-canvas-upscaled" style="width: 100%"></canvas>
+                <div id="step-3-selection-outline" hidden></div>
+              </div>
               <h4>Step 3</h4>
               <small className="step-header-subtitle">Align to closest pixel from available colors</small>
               <br />
@@ -1199,6 +1219,36 @@
                         Filled Rectangle
                         <small class="text-muted ml-auto pl-4">F</small>
                       </a>
+                      <a class="dropdown-item btn d-flex align-items-center" id="select-area-tool-dropdown-option">
+                        <span class="mr-2 d-flex">
+                          <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                            <rect
+                              x="2"
+                              y="3"
+                              width="12"
+                              height="10"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.5"
+                              stroke-dasharray="2 2"
+                            />
+                          </svg>
+                        </span>
+                        Select Area
+                        <small class="text-muted ml-auto pl-4">M</small>
+                      </a>
+                      <a class="dropdown-item btn d-flex align-items-center disabled" id="paste-tool-dropdown-option">
+                        <span class="mr-2 d-flex">
+                          <svg width="16" height="16" fill="currentColor" class="bi bi-clipboard-fill" viewBox="0 0 16 16">
+                            <path
+                              fill-rule="evenodd"
+                              d="M10 1.5a.5.5 0 0 0-.5-.5h-3a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 .5-.5v-1Zm-5 0A1.5 1.5 0 0 1 6.5 0h3A1.5 1.5 0 0 1 11 1.5v1A1.5 1.5 0 0 1 9.5 4h-3A1.5 1.5 0 0 1 5 2.5v-1Zm-2 0h1v1A2.5 2.5 0 0 0 6.5 5h3A2.5 2.5 0 0 0 12 2.5v-1h1a2 2 0 0 1 2 2V14a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V3.5a2 2 0 0 1 2-2Z"
+                            />
+                          </svg>
+                        </span>
+                        Paste
+                        <small class="text-muted ml-auto pl-4">Ctrl+V</small>
+                      </a>
                     </div>
                   </div>
                 </div>
@@ -1259,6 +1309,40 @@
                       <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z" />
                       <path
                         d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"
+                      />
+                    </svg>
+                  </button>
+                </div>
+                <div style="margin-bottom: 4px">
+                  <button
+                    class="btn paintbrush-controls-button"
+                    type="button"
+                    id="copy-selection-button"
+                    data-toggle="tooltip"
+                    title="Copy the selected area (Ctrl+C) - select one with the Select Area tool (M)"
+                    data-placement="top"
+                  >
+                    <svg width="16" height="16" fill="currentColor" class="bi bi-copy" viewBox="0 0 16 16">
+                      <path
+                        fill-rule="evenodd"
+                        d="M4 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2Zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6ZM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1h1v1a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h1v1H2Z"
+                      />
+                    </svg>
+                  </button>
+                </div>
+                <div style="margin-bottom: 4px">
+                  <button
+                    class="btn paintbrush-controls-button"
+                    type="button"
+                    id="paste-selection-button"
+                    data-toggle="tooltip"
+                    title="Paste the copied area (Ctrl+V) - click the picture to place it"
+                    data-placement="top"
+                  >
+                    <svg width="16" height="16" fill="currentColor" class="bi bi-clipboard-fill" viewBox="0 0 16 16">
+                      <path
+                        fill-rule="evenodd"
+                        d="M10 1.5a.5.5 0 0 0-.5-.5h-3a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 .5-.5v-1Zm-5 0A1.5 1.5 0 0 1 6.5 0h3A1.5 1.5 0 0 1 11 1.5v1A1.5 1.5 0 0 1 9.5 4h-3A1.5 1.5 0 0 1 5 2.5v-1Zm-2 0h1v1A2.5 2.5 0 0 0 6.5 5h3A2.5 2.5 0 0 0 12 2.5v-1h1a2 2 0 0 1 2 2V14a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V3.5a2 2 0 0 1 2-2Z"
                       />
                     </svg>
                   </button>
