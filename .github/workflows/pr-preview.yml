@@ -13,4 +13,7 @@ jobs:
   request-deploy:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "PR #${{ github.event.pull_request.number }} was ${{ github.event.action }}, previews will be redeployed"
+      - env:
+          NUMBER: ${{ github.event.pull_request.number }}
+          ACTION: ${{ github.event.action }}
+        run: echo "PR $NUMBER was $ACTION, previews will be redeployed"
