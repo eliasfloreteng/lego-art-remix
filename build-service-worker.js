@@ -8,6 +8,7 @@ const VERSION_NUMBER = "v2022.12.11";
 // 3. Run `npm install workbox-build` if it hasn't been run
 // 4. Run `node build-service-worker.js`
 // 5. Push to master; `.github/workflows/deploy-pages.yml` runs steps 3-4 and deploys `app` to GitHub Pages
+//    (open PRs are also deployed, to `pr-preview/pr-<number>/`)
 
 const workboxBuild = require("workbox-build");
 const buildSW = () => {

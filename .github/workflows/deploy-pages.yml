@@ -1,15 +1,22 @@
 name: Deploy to GitHub Pages
 
+# Deploys master to the root of the site, and every open pull request from this repository to
+# pr-preview/pr-<number>/. Every run rebuilds the whole site, so a closed PR's preview disappears
+# on the next deploy.
 on:
   push:
     branches: [master]
   workflow_dispatch:
+  workflow_run:
+    workflows: [PR Preview]
+    types: [completed]
 
 permissions:
   contents: read
   pages: write
   id-token: write
 
+# only the newest pending run is kept, and it includes every change before it
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -17,8 +24,16 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      previews: ${{ steps.previews.outputs.previews }}
+    permissions:
+      contents: read
+      pages: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: master
 
       - uses: actions/setup-node@v4
         with:
@@ -29,11 +44,20 @@ jobs:
           npm install --no-save workbox-build
           node build-service-worker.js
 
+      - name: Assemble site
+        run: cp -r app _site
+
+      - name: Add PR previews
+        id: previews
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/add-pr-previews.sh _site
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: app
+          path: _site
 
   deploy:
     needs: build
@@ -41,6 +65,38 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  comment:
+    needs: [build, deploy]
+    if: needs.build.outputs.previews != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@v7
+        env:
+          PREVIEWS: ${{ needs.build.outputs.previews }}
+          PAGE_URL: ${{ needs.deploy.outputs.page_url }}
+        with:
+          script: |
+            const marker = "<!-- pr-preview -->";
+            const pageUrl = process.env.PAGE_URL.replace(/\/?$/, "/");
+            for (const { number, sha } of JSON.parse(process.env.PREVIEWS)) {
+              const url = `${pageUrl}pr-preview/pr-${number}/`;
+              const body = `${marker}\n**Preview:** ${url}\n\nDeployed from ${sha}. The preview updates on every push and is removed when the PR closes.`;
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                ...context.repo,
+                issue_number: number,
+              });
+              const existing = comments.find((c) => c.body.startsWith(marker));
+              if (existing == null) {
+                await github.rest.issues.createComment({ ...context.repo, issue_number: number, body });
+              } else if (existing.body !== body) {
+                await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+              }
+            }
