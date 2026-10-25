@@ -581,6 +581,11 @@ const KNOWN_BRICKLINK_TILE_COLOR_NAMES = [
     "Bright Green", // manually added from art project
     "Dark Turquoise", // manually added from dots
     "Yellowish Green", // manually added from dots
+    "Dark Purple", // manually added
+    "Dark Green", // manually added
+    "Green", // manually added
+    "Pearl Dark Gray", // manually added
+    "Sand Green", // manually added
 ];
 
 const BRICKLINK_STUD_COLORS = ALL_BRICKLINK_SOLID_COLORS.filter((color) =>
