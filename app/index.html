@@ -2553,7 +2553,12 @@
 
     <script>
       // note that the disableServiceWorker param only disables new service worker registration
-      if ("serviceWorker" in navigator && !window.location.href.match(/disableServiceWorker/gi)) {
+      // PR previews don't get a service worker, so they always show the latest pushed commit
+      if (
+        "serviceWorker" in navigator &&
+        !window.location.href.match(/disableServiceWorker/gi) &&
+        !window.location.pathname.match(/\/pr-preview\//)
+      ) {
         // Register only after the page has fully loaded. On a first visit the service worker
         // precaches every asset, and doing that while the page itself is still loading makes
         // iOS Safari kill the tab ("This webpage was reloaded because a problem occurred").

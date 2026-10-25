@@ -1,0 +1,16 @@
+name: PR Preview
+
+# Pull request workflows can't deploy to the github-pages environment, which only accepts the
+# default branch, so this just records the change. Its completion triggers the "Deploy to GitHub
+# Pages" workflow (on master), which rebuilds the live site plus a preview of every open PR.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, closed]
+
+permissions: {}
+
+jobs:
+  request-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "PR #${{ github.event.pull_request.number }} was ${{ github.event.action }}, previews will be redeployed"

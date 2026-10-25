@@ -1,6 +1,10 @@
 const VERSION_NUMBER = "v2022.12.11";
 document.getElementById("version-number").innerHTML = VERSION_NUMBER;
 
+// PR previews are served from a subfolder of the same origin as the live site, so give their
+// saved state its own names instead of sharing (and possibly clobbering) the live site's
+const STORAGE_NAME_SUFFIX = (window.location.pathname.match(/\/pr-preview\/[^/]+\//) || [""])[0];
+
 let perfLoggingDatabase;
 try {
     perfLoggingDatabase = firebase.database();
@@ -620,7 +624,7 @@ TIEBREAK_TECHNIQUES.forEach((technique) => {
 
 let selectedInterpolationAlgorithm = "default";
 
-const FAVORITE_INTERPOLATION_ALGORITHMS_STORAGE_KEY = "favoriteInterpolationAlgorithms";
+const FAVORITE_INTERPOLATION_ALGORITHMS_STORAGE_KEY = "favoriteInterpolationAlgorithms" + STORAGE_NAME_SUFFIX;
 
 function loadFavoriteInterpolationAlgorithms() {
     try {
@@ -3762,7 +3766,7 @@ document.getElementById("toggle-tech-talk-button").addEventListener("click", () 
 enableInteraction(); // enable interaction once everything has loaded in
 
 // Auto save - keeps the current project in IndexedDB so it survives reloads and closed tabs
-const AUTO_SAVE_DB_NAME = "lego-art-remix-auto-save";
+const AUTO_SAVE_DB_NAME = "lego-art-remix-auto-save" + STORAGE_NAME_SUFFIX;
 const AUTO_SAVE_STORE_NAME = "projects";
 const AUTO_SAVE_KEY = "current";
 const AUTO_SAVE_FORMAT_VERSION = 1;
