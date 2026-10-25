@@ -465,6 +465,16 @@
                         >
                           Reset Project
                         </button>
+                        <button
+                          class="btn btn-outline-info"
+                          type="button"
+                          id="export-mosaic-button"
+                          data-toggle="tooltip"
+                          title="Download the image, settings and pixel edits as a file that can be imported later"
+                          data-placement="top"
+                        >
+                          Save &amp; Export Mosaic
+                        </button>
                       </div>
                       <small>
                         <p style="margin-left: 4px; margin-top: 4px">
@@ -2247,6 +2257,18 @@
             <div style="margin-top: 12px">
               <button class="btn btn-success" type="button" id="input-image-selector" disabled>
                 Select Input Image
+              </button>
+              <input type="file" id="import-mosaic-file-input" accept=".json,application/json" hidden />
+              <button
+                class="btn btn-outline-success"
+                type="button"
+                id="import-mosaic-button"
+                data-toggle="tooltip"
+                title="Open a mosaic exported with Save & Export Mosaic, including its settings and pixel edits"
+                data-placement="top"
+                disabled
+              >
+                Import Mosaic
               </button>
             </div>
           </span>

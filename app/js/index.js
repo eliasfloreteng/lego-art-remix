@@ -41,6 +41,8 @@ const HIGH_DPI = 96;
 const interactionSelectors = [
     "input-image-selector",
     "input-image-selector-hidden",
+    "import-mosaic-button",
+    "export-mosaic-button",
     "mix-in-stud-map-button",
     "width-slider",
     "height-slider",
@@ -4070,6 +4072,97 @@ document.getElementById("auto-save-start-over-button").addEventListener("click",
     resetProject();
 });
 document.getElementById("reset-project-button").addEventListener("click", resetProject);
+
+// Mosaic files hold the same state as the auto save, with the images as data urls (and without
+// the undo history, to keep them small)
+const MOSAIC_FILE_TYPE = "lego-art-remix-mosaic";
+
+function blobToDataURL(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+    });
+}
+
+async function exportMosaic() {
+    flushAutoSave();
+    const state = await getAutoSaveState();
+    const file = {
+        ...state,
+        type: MOSAIC_FILE_TYPE,
+        inputImage: await blobToDataURL(state.inputImage),
+        depthImage: await blobToDataURL(state.depthImage),
+        overrideUndoStack: [],
+        overrideRedoStack: [],
+    };
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([JSON.stringify(file)], { type: "application/json" }));
+    link.download = "Lego-Art-Remix-Mosaic.json";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 0);
+}
+
+async function importMosaic(file) {
+    let state;
+    try {
+        const mosaic = JSON.parse(await file.text());
+        if (mosaic.type !== MOSAIC_FILE_TYPE || mosaic.version !== AUTO_SAVE_FORMAT_VERSION) {
+            throw new Error("Not a supported mosaic file");
+        }
+        state = {
+            ...mosaic,
+            inputImage: await (await fetch(mosaic.inputImage)).blob(),
+            depthImage: await (await fetch(mosaic.depthImage)).blob(),
+        };
+    } catch (err) {
+        console.error("Could not read mosaic file: ", err);
+        window.alert("This file isn't a mosaic exported from Lego Art Remix.");
+        return;
+    }
+    if (
+        inputImageCropper != null &&
+        !window.confirm("Import this mosaic? It replaces the current project, including its pixel edits.")
+    ) {
+        return;
+    }
+
+    disableInteraction();
+    // the reload restores the mosaic like any auto save, from a clean page
+    isAutoSaveEnabled = false;
+    clearTimeout(autoSaveTimeout);
+    try {
+        await runAutoSaveRequest("readwrite", (store) => store.put(state, AUTO_SAVE_KEY));
+    } catch (err) {
+        console.error("Could not save imported mosaic, loading it without auto save: ", err);
+        if (inputImageCropper == null) {
+            return restoreAutoSaveState(state);
+        }
+        window.alert("The mosaic can't be imported while another project is open in this browser.");
+        enableInteraction();
+        return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.delete("image"); // a linked image would replace the restored project
+    window.location.href = url.toString();
+}
+
+document.getElementById("export-mosaic-button").addEventListener("click", () => {
+    exportMosaic().catch((err) => {
+        console.error("Could not export mosaic: ", err);
+        window.alert("The mosaic could not be exported.");
+    });
+});
+const importMosaicFileInput = document.getElementById("import-mosaic-file-input");
+document.getElementById("import-mosaic-button").addEventListener("click", () => importMosaicFileInput.click());
+importMosaicFileInput.addEventListener("change", () => {
+    const file = importMosaicFileInput.files[0];
+    importMosaicFileInput.value = ""; // so the same file can be picked again
+    if (file != null) {
+        importMosaic(file);
+    }
+});
 
 // Don't replace an image that was explicitly linked to
 if (imageURL == null) {
