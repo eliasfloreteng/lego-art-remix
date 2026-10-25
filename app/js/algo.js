@@ -21,6 +21,10 @@ function inverseHex(hex) {
     );
 }
 
+function getInstructionTextColor(hex) {
+    return COLOR_NAME_TO_INSTRUCTION_TEXT_COLOR[HEX_TO_COLOR_NAME[hex]] || inverseHex(hex);
+}
+
 function uuidv4() {
     return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
         var r = (Math.random() * 16) | 0,
@@ -995,7 +999,7 @@ function drawStudCountForContext(
             inverseHex(pixelHex),
             PIXEL_TYPE_TO_FLATTENED[pixelType]
         );
-        ctx.fillStyle = inverseHex(pixelHex);
+        ctx.fillStyle = getInstructionTextColor(pixelHex);
         ctx.fillText(number, x - (scalingFactor * (1 + Math.floor(number / 2) / 6)) / 8, y + scalingFactor / 8);
         ctx.fillStyle = "#000000";
         if (!("" + pixelType).match("^variable.*$")) {
@@ -1170,7 +1174,7 @@ function generateInstructionPage(
                 inverseHex(pixelHex),
                 PIXEL_TYPE_TO_FLATTENED[pixelType]
             );
-            ctx.fillStyle = inverseHex(pixelHex);
+            ctx.fillStyle = getInstructionTextColor(pixelHex);
             ctx.fillText(
                 studToNumber[pixelHex],
                 x - (scalingFactor * (1 + Math.floor(studToNumber[pixelHex] / 2) / 6)) / 8,
