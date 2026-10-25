@@ -62,6 +62,7 @@ const interactionSelectors = [
     "color-ties-resolution-button",
     "resolution-limit-increase-button",
     "high-quality-instructions-check",
+    "hide-unused-colors-instructions-check",
     "input-depth-image-selector",
     "generate-depth-image",
     "num-depth-levels-slider",
@@ -3094,6 +3095,7 @@ async function generateInstructions() {
     disableInteraction();
     runStep4(async () => {
         const isHighQuality = document.getElementById("high-quality-instructions-check").checked;
+        const shouldHideUnusedStuds = document.getElementById("hide-unused-colors-instructions-check").checked;
         const step4PixelArray = getPixelArrayFromCanvas(step4Canvas);
         const resultImage = isBleedthroughEnabled()
             ? revertDarkenedImage(
@@ -3186,7 +3188,8 @@ async function generateInstructions() {
                 instructionPageCanvas,
                 i + 1,
                 selectedPixelPartNumber,
-                variablePixelPieceDimensionsForPage
+                variablePixelPieceDimensionsForPage,
+                shouldHideUnusedStuds
             );
 
             setDPI(instructionPageCanvas, isHighQuality ? HIGH_DPI : LOW_DPI);
@@ -3769,6 +3772,7 @@ const AUTO_SAVE_SLIDERS = {
 const AUTO_SAVE_CHECKBOXES = [
     "infinite-piece-count-check",
     "high-quality-instructions-check",
+    "hide-unused-colors-instructions-check",
     "high-quality-depth-instructions-check",
 ];
 

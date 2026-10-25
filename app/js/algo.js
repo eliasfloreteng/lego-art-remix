@@ -981,15 +981,16 @@ function drawStudCountForContext(
     ctx,
     horizontalOffset,
     verticalOffset,
-    pixelType
+    pixelType,
+    shownStudHexList = availableStudHexList // a subset of availableStudHexList, which sets the numbering
 ) {
     const radius = scalingFactor / 2;
     ctx.font = `${scalingFactor / 2}px Arial`;
-    availableStudHexList.forEach((pixelHex, i) => {
-        const number = i + 1;
+    shownStudHexList.forEach((pixelHex, i) => {
+        const number = availableStudHexList.indexOf(pixelHex) + 1;
+        const y = verticalOffset + radius * 2.5 * (i + 1);
         ctx.beginPath();
         const x = horizontalOffset;
-        const y = verticalOffset + radius * 2.5 * number;
         drawPixel(
             ctx,
             x - radius,
@@ -1017,7 +1018,7 @@ function drawStudCountForContext(
         horizontalOffset - radius * 2,
         verticalOffset + radius * 0.75,
         radius * 11,
-        radius * 2.5 * (availableStudHexList.length + 0.5)
+        radius * 2.5 * (shownStudHexList.length + 0.5)
     );
     ctx.stroke();
 }
@@ -1114,7 +1115,8 @@ function generateInstructionPage(
     canvas,
     plateNumber,
     pixelType,
-    variablePixelPieceDimensions
+    variablePixelPieceDimensions,
+    shouldHideUnusedStuds
 ) {
     const ctx = canvas.getContext("2d");
 
@@ -1125,8 +1127,11 @@ function generateInstructionPage(
     const radius = scalingFactor / 2;
 
     const studMap = getUsedPixelsStudMap(pixelArray);
+    const shownStudHexList = shouldHideUnusedStuds
+        ? availableStudHexList.filter((pixelHex) => (studMap[pixelHex] || 0) > 0)
+        : availableStudHexList;
 
-    canvas.height = Math.max(pictureHeight * 1.5, pictureHeight * 0.4 + availableStudHexList.length * radius * 2.5);
+    canvas.height = Math.max(pictureHeight * 1.5, pictureHeight * 0.4 + shownStudHexList.length * radius * 2.5);
     canvas.width = pictureWidth * 2;
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1215,7 +1220,8 @@ function generateInstructionPage(
         ctx,
         pictureWidth * 0.25,
         pictureHeight * 0.2 - radius,
-        pixelType
+        pixelType,
+        shownStudHexList
     );
 }
 
