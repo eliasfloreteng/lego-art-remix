@@ -860,11 +860,34 @@ function getDarkenedImage(pixels) {
     return outputPixels;
 }
 
+// Some browsers add noise to canvas readback (fingerprinting protection), so a pixel may be slightly off
+// from every darkened stud. Such pixels revert to the stud whose darkened color is closest.
+function getClosestDarkenedStud(pixelHex, darkenedStudsToStuds) {
+    const pixelRGB = hexToRgb(pixelHex);
+    let closestStud = "#000000";
+    let closestDistance = Infinity;
+    Object.keys(darkenedStudsToStuds).forEach((darkenedStud) => {
+        const darkenedRGB = hexToRgb(darkenedStud);
+        const distance = darkenedRGB.reduce((sum, channel, i) => sum + (channel - pixelRGB[i]) ** 2, 0);
+        if (distance < closestDistance) {
+            closestDistance = distance;
+            closestStud = darkenedStudsToStuds[darkenedStud];
+        }
+    });
+    return closestStud;
+}
+
 function revertDarkenedImage(pixels, darkenedStudsToStuds) {
     const outputPixels = [...pixels];
+    const closestStudCache = {};
     for (let i = 0; i < pixels.length; i += 4) {
         const pixelHex = rgbToHex(pixels[i], pixels[i + 1], pixels[i + 2]);
-        const revertedPixelHex = pixelHex === "#000000" ? "#000000" : darkenedStudsToStuds[pixelHex];
+        let revertedPixelHex = pixelHex === "#000000" ? "#000000" : darkenedStudsToStuds[pixelHex];
+        if (revertedPixelHex == null) {
+            closestStudCache[pixelHex] =
+                closestStudCache[pixelHex] || getClosestDarkenedStud(pixelHex, darkenedStudsToStuds);
+            revertedPixelHex = closestStudCache[pixelHex];
+        }
         const revertedPixelRGB = hexToRgb(revertedPixelHex);
         for (let j = 0; j < 3; j++) {
             outputPixels[i + j] = revertedPixelRGB[j];
