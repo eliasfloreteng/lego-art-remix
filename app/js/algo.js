@@ -21,6 +21,10 @@ function inverseHex(hex) {
     );
 }
 
+function getInstructionTextColor(hex) {
+    return COLOR_NAME_TO_INSTRUCTION_TEXT_COLOR[HEX_TO_COLOR_NAME[hex]] || inverseHex(hex);
+}
+
 function uuidv4() {
     return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
         var r = (Math.random() * 16) | 0,
@@ -856,11 +860,34 @@ function getDarkenedImage(pixels) {
     return outputPixels;
 }
 
+// Some browsers add noise to canvas readback (fingerprinting protection), so a pixel may be slightly off
+// from every darkened stud. Such pixels revert to the stud whose darkened color is closest.
+function getClosestDarkenedStud(pixelHex, darkenedStudsToStuds) {
+    const pixelRGB = hexToRgb(pixelHex);
+    let closestStud = "#000000";
+    let closestDistance = Infinity;
+    Object.keys(darkenedStudsToStuds).forEach((darkenedStud) => {
+        const darkenedRGB = hexToRgb(darkenedStud);
+        const distance = darkenedRGB.reduce((sum, channel, i) => sum + (channel - pixelRGB[i]) ** 2, 0);
+        if (distance < closestDistance) {
+            closestDistance = distance;
+            closestStud = darkenedStudsToStuds[darkenedStud];
+        }
+    });
+    return closestStud;
+}
+
 function revertDarkenedImage(pixels, darkenedStudsToStuds) {
     const outputPixels = [...pixels];
+    const closestStudCache = {};
     for (let i = 0; i < pixels.length; i += 4) {
         const pixelHex = rgbToHex(pixels[i], pixels[i + 1], pixels[i + 2]);
-        const revertedPixelHex = pixelHex === "#000000" ? "#000000" : darkenedStudsToStuds[pixelHex];
+        let revertedPixelHex = pixelHex === "#000000" ? "#000000" : darkenedStudsToStuds[pixelHex];
+        if (revertedPixelHex == null) {
+            closestStudCache[pixelHex] =
+                closestStudCache[pixelHex] || getClosestDarkenedStud(pixelHex, darkenedStudsToStuds);
+            revertedPixelHex = closestStudCache[pixelHex];
+        }
         const revertedPixelRGB = hexToRgb(revertedPixelHex);
         for (let j = 0; j < 3; j++) {
             outputPixels[i + j] = revertedPixelRGB[j];
@@ -977,15 +1004,16 @@ function drawStudCountForContext(
     ctx,
     horizontalOffset,
     verticalOffset,
-    pixelType
+    pixelType,
+    shownStudHexList = availableStudHexList // a subset of availableStudHexList, which sets the numbering
 ) {
     const radius = scalingFactor / 2;
     ctx.font = `${scalingFactor / 2}px Arial`;
-    availableStudHexList.forEach((pixelHex, i) => {
-        const number = i + 1;
+    shownStudHexList.forEach((pixelHex, i) => {
+        const number = availableStudHexList.indexOf(pixelHex) + 1;
+        const y = verticalOffset + radius * 2.5 * (i + 1);
         ctx.beginPath();
         const x = horizontalOffset;
-        const y = verticalOffset + radius * 2.5 * number;
         drawPixel(
             ctx,
             x - radius,
@@ -995,7 +1023,7 @@ function drawStudCountForContext(
             inverseHex(pixelHex),
             PIXEL_TYPE_TO_FLATTENED[pixelType]
         );
-        ctx.fillStyle = inverseHex(pixelHex);
+        ctx.fillStyle = getInstructionTextColor(pixelHex);
         ctx.fillText(number, x - (scalingFactor * (1 + Math.floor(number / 2) / 6)) / 8, y + scalingFactor / 8);
         ctx.fillStyle = "#000000";
         if (!("" + pixelType).match("^variable.*$")) {
@@ -1013,7 +1041,7 @@ function drawStudCountForContext(
         horizontalOffset - radius * 2,
         verticalOffset + radius * 0.75,
         radius * 11,
-        radius * 2.5 * (availableStudHexList.length + 0.5)
+        radius * 2.5 * (shownStudHexList.length + 0.5)
     );
     ctx.stroke();
 }
@@ -1110,7 +1138,8 @@ function generateInstructionPage(
     canvas,
     plateNumber,
     pixelType,
-    variablePixelPieceDimensions
+    variablePixelPieceDimensions,
+    shouldHideUnusedStuds
 ) {
     const ctx = canvas.getContext("2d");
 
@@ -1121,8 +1150,11 @@ function generateInstructionPage(
     const radius = scalingFactor / 2;
 
     const studMap = getUsedPixelsStudMap(pixelArray);
+    const shownStudHexList = shouldHideUnusedStuds
+        ? availableStudHexList.filter((pixelHex) => (studMap[pixelHex] || 0) > 0)
+        : availableStudHexList;
 
-    canvas.height = Math.max(pictureHeight * 1.5, pictureHeight * 0.4 + availableStudHexList.length * radius * 2.5);
+    canvas.height = Math.max(pictureHeight * 1.5, pictureHeight * 0.4 + shownStudHexList.length * radius * 2.5);
     canvas.width = pictureWidth * 2;
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1170,7 +1202,7 @@ function generateInstructionPage(
                 inverseHex(pixelHex),
                 PIXEL_TYPE_TO_FLATTENED[pixelType]
             );
-            ctx.fillStyle = inverseHex(pixelHex);
+            ctx.fillStyle = getInstructionTextColor(pixelHex);
             ctx.fillText(
                 studToNumber[pixelHex],
                 x - (scalingFactor * (1 + Math.floor(studToNumber[pixelHex] / 2) / 6)) / 8,
@@ -1211,7 +1243,8 @@ function generateInstructionPage(
         ctx,
         pictureWidth * 0.25,
         pictureHeight * 0.2 - radius,
-        pixelType
+        pixelType,
+        shownStudHexList
     );
 }
 

@@ -41,6 +41,8 @@ const HIGH_DPI = 96;
 const interactionSelectors = [
     "input-image-selector",
     "input-image-selector-hidden",
+    "import-mosaic-button",
+    "export-mosaic-button",
     "mix-in-stud-map-button",
     "width-slider",
     "height-slider",
@@ -62,6 +64,8 @@ const interactionSelectors = [
     "color-ties-resolution-button",
     "resolution-limit-increase-button",
     "high-quality-instructions-check",
+    "hide-unused-colors-instructions-check",
+    "export-mosaic-image-button",
     "input-depth-image-selector",
     "generate-depth-image",
     "num-depth-levels-slider",
@@ -343,6 +347,7 @@ let overrideRedoStack = [];
 function resetOverrideHistory() {
     overrideUndoStack = [];
     overrideRedoStack = [];
+    clearStep3Selection(); // the selected cells may not exist in the new image
 }
 
 function pushOverrideHistory() {
@@ -2307,6 +2312,82 @@ const PAINTBRUSH_SHAPE_TOOLS = [
     "filled-rectangle-tool-dropdown-option",
 ];
 
+const SELECT_AREA_TOOL = "select-area-tool-dropdown-option";
+const PASTE_TOOL = "paste-tool-dropdown-option";
+
+let step3Selection = null; // [minRow, minCol, maxRow, maxCol] of the selected area
+let selectionStartCell = null;
+let step3Clipboard = null; // rows of displayed hex colors copied from the selection
+let pastePreviewCells = []; // [pixel index, hex] pairs of the clipboard drawn under the cursor
+
+function setStep3Selection(startCell, endCell) {
+    const width = Number(targetResolution[0]);
+    const height = Number(targetResolution[1]);
+    step3Selection = [
+        Math.min(startCell[0], endCell[0]),
+        Math.min(startCell[1], endCell[1]),
+        Math.max(startCell[0], endCell[0]),
+        Math.max(startCell[1], endCell[1]),
+    ];
+    const [minRow, minCol, maxRow, maxCol] = step3Selection;
+    const outline = document.getElementById("step-3-selection-outline");
+    outline.style.top = `${(100 * minRow) / height}%`;
+    outline.style.left = `${(100 * minCol) / width}%`;
+    outline.style.height = `${(100 * (maxRow - minRow + 1)) / height}%`;
+    outline.style.width = `${(100 * (maxCol - minCol + 1)) / width}%`;
+    outline.hidden = false;
+}
+
+function clearStep3Selection() {
+    step3Selection = null;
+    selectionStartCell = null;
+    document.getElementById("step-3-selection-outline").hidden = true;
+}
+
+function copyStep3Selection() {
+    if (step3Selection == null || step3BasePixelArray == null) {
+        return;
+    }
+    const [minRow, minCol, maxRow, maxCol] = step3Selection;
+    step3Clipboard = [];
+    for (let row = minRow; row <= maxRow; row++) {
+        const clipboardRow = [];
+        for (let col = minCol; col <= maxCol; col++) {
+            clipboardRow.push(getStep3DisplayedHex(4 * (row * targetResolution[0] + col)));
+        }
+        step3Clipboard.push(clipboardRow);
+    }
+    document.getElementById(PASTE_TOOL).classList.remove("disabled");
+}
+
+// returns [pixel index, hex] pairs of the clipboard with its top left cell at row, col, clipped to the image
+function getPasteCells(row, col) {
+    const width = Number(targetResolution[0]);
+    const height = Number(targetResolution[1]);
+    const cells = [];
+    step3Clipboard.forEach((clipboardRow, rowOffset) => {
+        clipboardRow.forEach((hex, colOffset) => {
+            const r = row + rowOffset;
+            const c = col + colOffset;
+            if (r < height && c < width) {
+                cells.push([r * width + c, hex]);
+            }
+        });
+    });
+    return cells;
+}
+
+function clearPastePreview() {
+    pastePreviewCells.forEach(([i]) => drawStep3Cell(i, getStep3DisplayedHex(4 * i)));
+    pastePreviewCells = [];
+}
+
+function updatePastePreview(row, col) {
+    clearPastePreview();
+    pastePreviewCells = getPasteCells(row, col);
+    pastePreviewCells.forEach(([i, hex]) => drawStep3Cell(i, hex));
+}
+
 let isStep3MouseDown = false;
 let activePaintbrushHex = null; // the color being painted with while the mouse is down
 let wasPaintbrushUsed = false; // only propogate changes on mouse leave if this is true
@@ -2349,7 +2430,13 @@ function onStep3PaintingMouseLift() {
         shapePreviewCells.forEach((i) => setStep3CellOverride(i, activePaintbrushHex));
         wasPaintbrushUsed = true;
     }
+    if (isStep3MouseDown && selectedPaintbrushTool === PASTE_TOOL && pastePreviewCells.length > 0) {
+        pushOverrideHistory();
+        pastePreviewCells.forEach(([i, hex]) => setStep3CellOverride(i, hex));
+        wasPaintbrushUsed = true;
+    }
     isStep3MouseDown = false;
+    selectionStartCell = null;
     activePaintbrushHex = null;
     lastBrushCell = null;
     shapeStartCell = null;
@@ -2401,6 +2488,11 @@ step3CanvasUpscaled.addEventListener(
         } else if (PAINTBRUSH_SHAPE_TOOLS.includes(selectedPaintbrushTool)) {
             shapeStartCell = [row, col];
             updateShapePreview(row, col);
+        } else if (selectedPaintbrushTool === SELECT_AREA_TOOL) {
+            selectionStartCell = [row, col];
+            setStep3Selection(selectionStartCell, selectionStartCell);
+        } else if (selectedPaintbrushTool === PASTE_TOOL) {
+            updatePastePreview(row, col); // placed on mouse lift, so touches can drag it into place
         } else {
             // dropper tool
             onCherryPickColor(row, col);
@@ -2412,6 +2504,12 @@ step3CanvasUpscaled.addEventListener(
 let selectedPaintbrushTool = "paintbrush-tool-dropdown-option";
 
 function selectPaintbrushTool(toolId) {
+    if (toolId === PASTE_TOOL && step3Clipboard == null) {
+        return; // nothing to paste yet
+    }
+    if (selectedPaintbrushTool === PASTE_TOOL) {
+        clearPastePreview();
+    }
     selectedPaintbrushTool = toolId;
     document.getElementById("paintbrush-color-dropdown").disabled = !PAINTBRUSH_TOOLS_USING_COLOR.includes(toolId);
     document.getElementById("paintbrush-tool-selection-dropdown").innerHTML =
@@ -2451,6 +2549,8 @@ function redoOverrideChange() {
 
 document.getElementById("undo-overrides-button").addEventListener("click", undoOverrideChange);
 document.getElementById("redo-overrides-button").addEventListener("click", redoOverrideChange);
+document.getElementById("copy-selection-button").addEventListener("click", copyStep3Selection);
+document.getElementById("paste-selection-button").addEventListener("click", () => selectPaintbrushTool(PASTE_TOOL));
 
 const PAINTBRUSH_TOOL_SHORTCUTS = {
     b: "paintbrush-tool-dropdown-option",
@@ -2461,6 +2561,7 @@ const PAINTBRUSH_TOOL_SHORTCUTS = {
     l: "line-tool-dropdown-option",
     u: "rectangle-tool-dropdown-option",
     f: "filled-rectangle-tool-dropdown-option",
+    m: SELECT_AREA_TOOL,
 };
 
 document.addEventListener("keydown", (event) => {
@@ -2480,6 +2581,12 @@ document.addEventListener("keydown", (event) => {
         } else if ((key === "z" && event.shiftKey) || key === "y") {
             event.preventDefault();
             redoOverrideChange();
+        } else if (key === "c" && step3Selection != null && !event.shiftKey && window.getSelection().isCollapsed) {
+            event.preventDefault();
+            copyStep3Selection();
+        } else if (key === "v" && step3Clipboard != null && !event.shiftKey) {
+            event.preventDefault();
+            selectPaintbrushTool(PASTE_TOOL);
         }
         return;
     }
@@ -2492,6 +2599,8 @@ document.addEventListener("keydown", (event) => {
         setStep3BrushSize(step3BrushSize - 1);
     } else if (event.key === "]") {
         setStep3BrushSize(step3BrushSize + 1);
+    } else if (event.key === "Escape") {
+        clearStep3Selection();
     }
 });
 
@@ -2514,7 +2623,18 @@ function onMouseMoveOverStep3Canvas(event) {
             }
         } else if (selectedPaintbrushTool === "dropdown-tool-dropdown-option") {
             onCherryPickColor(row, col);
+        } else if (selectedPaintbrushTool === SELECT_AREA_TOOL && selectionStartCell != null) {
+            setStep3Selection(selectionStartCell, [row, col]);
+        } else if (selectedPaintbrushTool === PASTE_TOOL) {
+            updatePastePreview(row, col);
         }
+        return;
+    }
+
+    if (selectedPaintbrushTool === PASTE_TOOL) {
+        // show the clipboard under the cursor instead of the hover highlight
+        clearStep3HoverHighlight();
+        updatePastePreview(row, col);
         return;
     }
 
@@ -2536,6 +2656,9 @@ step3CanvasUpscaled.addEventListener(
             clearStep3HoverHighlight();
         }
         onStep3PaintingMouseLift();
+        if (step3BasePixelArray != null) {
+            clearPastePreview();
+        }
     },
     false
 );
@@ -3057,19 +3180,15 @@ function runStep4(asyncCallback) {
     }
 }
 
-function addWaterMark(pdf, isHighQuality) {
-    for (let i = 0; i < pdf.internal.getNumberOfPages(); i++) {
-        pdf.setPage(i + 1);
-        pdf.setFontSize(isHighQuality ? 20 : 10);
-        pdf.setTextColor(200);
-        pdf.text(
-            pdf.internal.pageSize.height * 0.25,
-            pdf.internal.pageSize.height * 0.3,
-            "Generated by lego-art-remix.com"
-        );
-        pdf.text(pdf.internal.pageSize.height * 0.25, pdf.internal.pageSize.height * 0.3 + 10, VERSION_NUMBER);
-    }
-}
+document.getElementById("export-mosaic-image-button").addEventListener("click", () => {
+    step4CanvasUpscaled.toBlob((blob) => {
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "Lego-Art-Remix-Mosaic.png";
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(link.href), 0);
+    }, "image/png");
+});
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -3108,6 +3227,7 @@ async function generateInstructions() {
     disableInteraction();
     runStep4(async () => {
         const isHighQuality = document.getElementById("high-quality-instructions-check").checked;
+        const shouldHideUnusedStuds = document.getElementById("hide-unused-colors-instructions-check").checked;
         const step4PixelArray = getPixelArrayFromCanvas(step4Canvas);
         const resultImage = isBleedthroughEnabled()
             ? revertDarkenedImage(
@@ -3161,7 +3281,6 @@ async function generateInstructions() {
         for (var i = 0; i < totalPlates; i++) {
             await sleep(50);
             if ((i + 1) % (isHighQuality ? 20 : 50) === 0) {
-                addWaterMark(pdf, isHighQuality);
                 pdf.save(`Lego-Art-Remix-Instructions-Part-${numParts}.pdf`);
                 numParts++;
                 pdf = new jsPDF({
@@ -3201,7 +3320,8 @@ async function generateInstructions() {
                 instructionPageCanvas,
                 i + 1,
                 selectedPixelPartNumber,
-                variablePixelPieceDimensionsForPage
+                variablePixelPieceDimensionsForPage,
+                shouldHideUnusedStuds
             );
 
             setDPI(instructionPageCanvas, isHighQuality ? HIGH_DPI : LOW_DPI);
@@ -3217,7 +3337,6 @@ async function generateInstructions() {
             );
         }
 
-        addWaterMark(pdf, isHighQuality);
         pdf.save(numParts > 1 ? `Lego-Art-Remix-Instructions-Part-${numParts}.pdf` : "Lego-Art-Remix-Instructions.pdf");
         document.getElementById("pdf-progress-container").hidden = true;
         document.getElementById("download-instructions-button").hidden = false;
@@ -3330,7 +3449,6 @@ async function generateDepthInstructions() {
 
             if ((i + 1) % (isHighQuality ? 20 : 50) === 0) {
                 if (pdf != null) {
-                    addWaterMark(pdf, isHighQuality);
                     pdf.save(`Lego-Art-Remix-Instructions-Part-${numParts}.pdf`);
 
                     numParts++;
@@ -3361,7 +3479,6 @@ async function generateDepthInstructions() {
             }%`;
         }
 
-        addWaterMark(pdf, isHighQuality);
         pdf.save(numParts > 1 ? `Lego-Art-Remix-Instructions-Part-${numParts}.pdf` : "Lego-Art-Remix-Instructions.pdf");
         document.getElementById("depth-pdf-progress-container").hidden = true;
         document.getElementById("download-depth-instructions-button").hidden = false;
@@ -3787,6 +3904,7 @@ const AUTO_SAVE_SLIDERS = {
 const AUTO_SAVE_CHECKBOXES = [
     "infinite-piece-count-check",
     "high-quality-instructions-check",
+    "hide-unused-colors-instructions-check",
     "high-quality-depth-instructions-check",
 ];
 
@@ -4073,6 +4191,97 @@ document.getElementById("auto-save-start-over-button").addEventListener("click",
     resetProject();
 });
 document.getElementById("reset-project-button").addEventListener("click", resetProject);
+
+// Mosaic files hold the same state as the auto save, with the images as data urls (and without
+// the undo history, to keep them small)
+const MOSAIC_FILE_TYPE = "lego-art-remix-mosaic";
+
+function blobToDataURL(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+    });
+}
+
+async function exportMosaic() {
+    flushAutoSave();
+    const state = await getAutoSaveState();
+    const file = {
+        ...state,
+        type: MOSAIC_FILE_TYPE,
+        inputImage: await blobToDataURL(state.inputImage),
+        depthImage: await blobToDataURL(state.depthImage),
+        overrideUndoStack: [],
+        overrideRedoStack: [],
+    };
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([JSON.stringify(file)], { type: "application/json" }));
+    link.download = "Lego-Art-Remix-Mosaic.json";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 0);
+}
+
+async function importMosaic(file) {
+    let state;
+    try {
+        const mosaic = JSON.parse(await file.text());
+        if (mosaic.type !== MOSAIC_FILE_TYPE || mosaic.version !== AUTO_SAVE_FORMAT_VERSION) {
+            throw new Error("Not a supported mosaic file");
+        }
+        state = {
+            ...mosaic,
+            inputImage: await (await fetch(mosaic.inputImage)).blob(),
+            depthImage: await (await fetch(mosaic.depthImage)).blob(),
+        };
+    } catch (err) {
+        console.error("Could not read mosaic file: ", err);
+        window.alert("This file isn't a mosaic exported from Lego Art Remix.");
+        return;
+    }
+    if (
+        inputImageCropper != null &&
+        !window.confirm("Import this mosaic? It replaces the current project, including its pixel edits.")
+    ) {
+        return;
+    }
+
+    disableInteraction();
+    // the reload restores the mosaic like any auto save, from a clean page
+    isAutoSaveEnabled = false;
+    clearTimeout(autoSaveTimeout);
+    try {
+        await runAutoSaveRequest("readwrite", (store) => store.put(state, AUTO_SAVE_KEY));
+    } catch (err) {
+        console.error("Could not save imported mosaic, loading it without auto save: ", err);
+        if (inputImageCropper == null) {
+            return restoreAutoSaveState(state);
+        }
+        window.alert("The mosaic can't be imported while another project is open in this browser.");
+        enableInteraction();
+        return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.delete("image"); // a linked image would replace the restored project
+    window.location.href = url.toString();
+}
+
+document.getElementById("export-mosaic-button").addEventListener("click", () => {
+    exportMosaic().catch((err) => {
+        console.error("Could not export mosaic: ", err);
+        window.alert("The mosaic could not be exported.");
+    });
+});
+const importMosaicFileInput = document.getElementById("import-mosaic-file-input");
+document.getElementById("import-mosaic-button").addEventListener("click", () => importMosaicFileInput.click());
+importMosaicFileInput.addEventListener("change", () => {
+    const file = importMosaicFileInput.files[0];
+    importMosaicFileInput.value = ""; // so the same file can be picked again
+    if (file != null) {
+        importMosaic(file);
+    }
+});
 
 // Don't replace an image that was explicitly linked to
 if (imageURL == null) {

@@ -460,6 +460,23 @@ ALL_BRICKLINK_SOLID_COLORS.forEach((color) => {
     COLOR_NAME_TO_ID[color.name] = color.id;
 });
 
+// Number colors on instruction dots that read better than the default (the dot's inverse color)
+const COLOR_NAME_TO_INSTRUCTION_TEXT_COLOR = {
+    "Dark Bluish Gray": "#ffffff",
+    "Dark Green": "#ffffff",
+    "Dark Orange": "#ffffff",
+    "Dark Pink": "#ffffff",
+    "Dark Purple": "#ffffff",
+    "Dark Tan": "#ffffff",
+    "Flat Silver": "#ffffff",
+    Lavender: "#ffffff",
+    "Medium Nougat": "#000000",
+    "Olive Green": "#ffffff",
+    "Pearl Dark Gray": "#ffffff",
+    "Sand Blue": "#ffffff",
+    "Sand Green": "#000000",
+};
+
 const KNOWN_BRICKLINK_STUD_COLOR_NAMES = [
     "Black",
     "Blue",
@@ -581,6 +598,11 @@ const KNOWN_BRICKLINK_TILE_COLOR_NAMES = [
     "Bright Green", // manually added from art project
     "Dark Turquoise", // manually added from dots
     "Yellowish Green", // manually added from dots
+    "Dark Purple", // manually added
+    "Dark Green", // manually added
+    "Green", // manually added
+    "Pearl Dark Gray", // manually added
+    "Sand Green", // manually added
 ];
 
 const BRICKLINK_STUD_COLORS = ALL_BRICKLINK_SOLID_COLORS.filter((color) =>
